@@ -38,6 +38,9 @@ pub const KEYMINT_V3_VERSION: i32 = 300;
 pub const ATTESTATION_EXTENSION_OID: ObjectIdentifier =
     ObjectIdentifier::new_unwrap("1.3.6.1.4.1.11129.2.1.17");
 
+/// Empty book key value to use in attestations.
+const EMPTY_BOOT_KEY: [u8; 32] = [0u8; 32];
+
 /// Build an ASN.1 DER-encodable `Certificate`.
 pub(crate) fn certificate<'a>(
     tbs_cert: TbsCertificate<'a>,
@@ -383,7 +386,7 @@ macro_rules! check_attestation_id {
         {
             if let Some(val) = get_opt_tag_value!($params, $variant)? {
                 match $mustmatch {
-                    None => return Err(km_err!(AttestationIdsNotProvisioned,
+                    None => return Err(km_err!(CannotAttestIds,
                                                "no attestation IDs provisioned")),
                     Some(want)  => if val != want {
                         return Err(km_err!(CannotAttestIds,
@@ -902,12 +905,19 @@ macro_rules! asn1_set_of_integer {
                 }
             }
             if !results.is_empty() {
-                // The contents of the SET OF INTEGER are not necessarily lexicographically ordered
-                // according to their DER encodings, so this is not necessarily valid DER (but it is
-                // valid BER).
+                // The input key characteristics have been sorted and so are in numerical order, but
+                // may contain duplicates that need to be weeded out.
                 let mut set = der::asn1::SetOfVec::new();
+                let mut prev_val = None;
                 for val in results {
-                    set.add(val as i64)?;
+                    let val = val as i64;
+                    if let Some(prev) = prev_val {
+                        if prev == val {
+                            continue; // skip duplicate
+                        }
+                    }
+                    set.add(val)?;
+                    prev_val = Some(val);
                 }
                 $contents.try_push(Box::new(ExplicitTaggedValue {
                     tag: raw_tag_value(Tag::$variant),
@@ -1138,8 +1148,15 @@ struct RootOfTrust<'a> {
 
 impl<'a> From<&'a keymint::BootInfo> for RootOfTrust<'a> {
     fn from(info: &keymint::BootInfo) -> RootOfTrust {
+        let verified_boot_key: &[u8] = if info.verified_boot_key.is_empty() {
+            // If an empty verified boot key was passed by the boot loader, set the verified boot
+            // key in the attestation to all zeroes.
+            &EMPTY_BOOT_KEY[..]
+        } else {
+            &info.verified_boot_key[..]
+        };
         RootOfTrust {
-            verified_boot_key: &info.verified_boot_key[..],
+            verified_boot_key,
             device_locked: info.device_boot_locked,
             verified_boot_state: info.verified_boot_state.into(),
             verified_boot_hash: &info.verified_boot_hash[..],
@@ -1254,7 +1271,7 @@ mod tests {
         ];
         for (input, want) in tests {
             let got = input.to_vec().unwrap();
-            assert_eq!(hex::encode(&got), want);
+            assert_eq!(hex::encode(got), want);
         }
     }
 
@@ -1297,5 +1314,48 @@ mod tests {
         assert_eq!(hex::encode(&got), want);
         // decode from encoded
         assert_eq!(AuthorizationList::from_der(got.as_slice()).unwrap(), authz_list);
+    }
+
+    #[test]
+    fn test_authz_list_dup_encode() {
+        use kmr_wire::keymint::Digest;
+        let authz_list = AuthorizationList::new(
+            &[
+                KeyParam::Digest(Digest::None),
+                KeyParam::Digest(Digest::Sha1),
+                KeyParam::Digest(Digest::Sha1), // duplicate value
+            ],
+            &[],
+            None,
+            Some(RootOfTrust {
+                verified_boot_key: &[0xbbu8; 32],
+                device_locked: false,
+                verified_boot_state: VerifiedBootState::Unverified,
+                verified_boot_hash: &[0xee; 32],
+            }),
+            None,
+        )
+        .unwrap();
+        let got = authz_list.to_vec().unwrap();
+        assert!(AuthorizationList::from_der(got.as_slice()).is_ok());
+    }
+
+    #[test]
+    fn test_authz_list_order_fail() {
+        use kmr_wire::keymint::Digest;
+        let authz_list = AuthorizationList::new(
+            &[KeyParam::Digest(Digest::Sha1), KeyParam::Digest(Digest::None)],
+            &[],
+            None,
+            Some(RootOfTrust {
+                verified_boot_key: &[0xbbu8; 32],
+                device_locked: false,
+                verified_boot_state: VerifiedBootState::Unverified,
+                verified_boot_hash: &[0xee; 32],
+            }),
+            None,
+        )
+        .unwrap();
+        assert!(authz_list.to_vec().is_err());
     }
 }
