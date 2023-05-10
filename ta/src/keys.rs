@@ -501,7 +501,8 @@ impl<'a> crate::KeyMintTa<'a> {
             return Err(km_err!(InvalidArgument, "invalid version in Secure Key Wrapper."));
         }
 
-        // Decrypt the masked transport key.
+        // Decrypt the masked transport key, using an RSA key. (Only RSA wrapping keys are supported
+        // by the spec, as RSA is the only algorithm supporting asymmetric decryption.)
         let masked_transport_key = match key_material {
             KeyMaterial::Rsa(key) => {
                 // Check the requirements on the wrapping key characterisitcs
@@ -515,7 +516,6 @@ impl<'a> crate::KeyMintTa<'a> {
                 crypto_op.as_mut().update(secure_key_wrapper.encrypted_transport_key)?;
                 crypto_op.finish()?
             }
-            // TODO: For now, we consider wrapping keys to be RSA keys only.
             _ => {
                 return Err(km_err!(InvalidArgument, "invalid key algorithm for transport key"));
             }

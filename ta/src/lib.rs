@@ -106,12 +106,12 @@ pub struct KeyMintTa<'a> {
     /// Attestation ID information, fixed forever for a device, but retrieved on first use.
     attestation_id_info: RefCell<Option<Rc<AttestationIdInfo>>>,
 
-    // Public DICE artifacts (UDS certs and the DICE chain) included in the certificate signing
-    // requests (CSR) and the algorithm used to sign the CSR for IRemotelyProvisionedComponent
-    // (IRPC) HAL. Fixed for a device. Retrieved on first use.
-    //
-    // Note: This information is cached only in the implementations of IRPC HAL V3 and
-    // IRPC HAL V2 in production mode.
+    /// Public DICE artifacts (UDS certs and the DICE chain) included in the certificate signing
+    /// requests (CSR) and the algorithm used to sign the CSR for IRemotelyProvisionedComponent
+    /// (IRPC) HAL. Fixed for a device. Retrieved on first use.
+    ///
+    /// Note: This information is cached only in the implementations of IRPC HAL V3 and
+    /// IRPC HAL V2 in production mode.
     dice_info: RefCell<Option<Rc<DiceInfo>>>,
 
     /// Whether the device is still in early-boot.
@@ -193,10 +193,15 @@ enum LockState {
 #[derive(Clone, Debug)]
 pub struct HardwareInfo {
     // Fields that correspond to the HAL `KeyMintHardwareInfo` type.
+    /// Security level that this KeyMint implementation is running at.
     pub security_level: SecurityLevel,
+    /// Version number.
     pub version_number: i32,
+    /// KeyMint implementation name.
     pub impl_name: &'static str,
+    /// Author of KeyMint implementation.
     pub author_name: &'static str,
+    /// Unique identifier for this KeyMint.
     pub unique_id: &'static str,
     // The `timestamp_token_required` field in `KeyMintHardwareInfo` is skipped here because it gets
     // set depending on whether a local clock is available.
@@ -206,12 +211,15 @@ pub struct HardwareInfo {
 /// and DeviceInfo.aidl, for IRemotelyProvisionedComponent (IRPC) HAL V2.
 #[derive(Debug)]
 pub struct RpcInfoV2 {
-    // Used in RpcHardwareInfo.aidl
+    // Fields used in `RpcHardwareInfo.aidl`:
+    /// Author of KeyMint implementation.
     pub author_name: &'static str,
+    /// EEK curve supported by this implementation.
     pub supported_eek_curve: EekCurve,
+    /// Unique identifier for this KeyMint.
     pub unique_id: &'static str,
-    // Used as `DeviceInfo.fused`.
-    // Indication of whether secure boot is enforced for the processor running this code.
+    /// Indication of whether secure boot is enforced for the processor running this code.
+    /// Used as `DeviceInfo.fused`.
     pub fused: bool,
 }
 
@@ -219,23 +227,29 @@ pub struct RpcInfoV2 {
 /// and DeviceInfo.aidl, for IRemotelyProvisionedComponent (IRPC) HAL V3.
 #[derive(Debug)]
 pub struct RpcInfoV3 {
-    // Used in RpcHardwareInfo.aidl
+    // Fields used in `RpcHardwareInfo.aidl`:
+    /// Author of KeyMint implementation.
     pub author_name: &'static str,
+    /// Unique identifier for this KeyMint.
     pub unique_id: &'static str,
-    // Used as `DeviceInfo.fused`.
-    // Indication of whether secure boot is enforced for the processor running this code.
+    /// Indication of whether secure boot is enforced for the processor running this code.
+    /// Used as `DeviceInfo.fused`.
     pub fused: bool,
+    /// Supported number of keys in a CSR.
     pub supported_num_of_keys_in_csr: i32,
 }
 
 /// Enum to distinguish the set of information required for different versions of IRPC HAL
 /// implementations
 pub enum RpcInfo {
+    /// Information for v2 of the IRPC HAL.
     V2(RpcInfoV2),
+    /// Information for v3 of the IRPC HAL.
     V3(RpcInfoV3),
 }
 
 impl RpcInfo {
+    /// Indicate the HAL version of RPC information.
     pub fn get_version(&self) -> i32 {
         match self {
             RpcInfo::V2(_) => IRPC_V2,
@@ -249,9 +263,12 @@ impl RpcInfo {
 /// boot, e.g. for running GSI).
 #[derive(Clone, Copy, Debug)]
 pub struct HalInfo {
+    /// OS version.
     pub os_version: u32,
-    pub os_patchlevel: u32,     // YYYYMM format
-    pub vendor_patchlevel: u32, // YYYYMMDD format
+    /// OS patchlevel, in YYYYMM format.
+    pub os_patchlevel: u32,
+    /// Vendor patchlevel, in YYYYMMDD format
+    pub vendor_patchlevel: u32,
 }
 
 /// Identifier for a keyblob.

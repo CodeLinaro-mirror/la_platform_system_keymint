@@ -40,7 +40,9 @@ pub const UNPOLICED_COPYABLE_TAGS: &[Tag] = &[
 /// Indication of whether secure storage is available.
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum SecureStorage {
+    /// Device has secure storage.
     Available,
+    /// Device does not have secure storage.
     Unavailable,
 }
 

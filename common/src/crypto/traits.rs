@@ -422,13 +422,16 @@ pub trait AccumulatingOperation {
 /// A default implementation of this trait is available (in `crypto.rs`) for any type that
 /// implements [`Hmac`].
 pub trait Hkdf {
+    /// Perform combined HKDF using the input key material in `ikm`.
     fn hkdf(&self, salt: &[u8], ikm: &[u8], info: &[u8], out_len: usize) -> Result<Vec<u8>, Error> {
         let prk = self.extract(salt, ikm)?;
         self.expand(&prk, info, out_len)
     }
 
+    /// Perform the HKDF-Extract step on the input key material in `ikm`, using optional `salt`.
     fn extract(&self, salt: &[u8], ikm: &[u8]) -> Result<OpaqueOr<hmac::Key>, Error>;
 
+    /// Perform the HKDF-Expand step using the pseudo-random key in `prk`.
     fn expand(
         &self,
         prk: &OpaqueOr<hmac::Key>,
@@ -443,6 +446,7 @@ pub trait Hkdf {
 /// Aa default implementation of this trait is available (in `crypto.rs`) for any type that
 /// implements [`AesCmac`].
 pub trait Ckdf {
+    /// Perform CKDF using the key material in `key`.
     fn ckdf(
         &self,
         key: &OpaqueOr<aes::Key>,
@@ -478,6 +482,7 @@ macro_rules! unimpl {
     };
 }
 
+/// Stub implementation of [`Rng`].
 pub struct NoOpRng;
 impl Rng for NoOpRng {
     fn add_entropy(&mut self, _data: &[u8]) {
@@ -488,6 +493,7 @@ impl Rng for NoOpRng {
     }
 }
 
+/// Stub implementation of [`ConstTimeEq`].
 #[derive(Clone)]
 pub struct InsecureEq;
 impl ConstTimeEq for InsecureEq {
@@ -497,6 +503,7 @@ impl ConstTimeEq for InsecureEq {
     }
 }
 
+/// Stub implementation of [`MonotonicClock`].
 pub struct NoOpClock;
 impl MonotonicClock for NoOpClock {
     fn now(&self) -> MillisecondsSinceEpoch {
@@ -505,6 +512,7 @@ impl MonotonicClock for NoOpClock {
     }
 }
 
+/// Stub implementation of [`Aes`].
 pub struct NoOpAes;
 impl Aes for NoOpAes {
     fn begin(
@@ -525,6 +533,7 @@ impl Aes for NoOpAes {
     }
 }
 
+/// Stub implementation of [`Des`].
 pub struct NoOpDes;
 impl Des for NoOpDes {
     fn begin(
@@ -537,6 +546,7 @@ impl Des for NoOpDes {
     }
 }
 
+/// Stub implementation of [`Hmac`].
 pub struct NoOpHmac;
 impl Hmac for NoOpHmac {
     fn begin(
@@ -548,6 +558,7 @@ impl Hmac for NoOpHmac {
     }
 }
 
+/// Stub implementation of [`Cmac`].
 pub struct NoOpAesCmac;
 impl AesCmac for NoOpAesCmac {
     fn begin(&self, _key: OpaqueOr<aes::Key>) -> Result<Box<dyn AccumulatingOperation>, Error> {
@@ -555,6 +566,7 @@ impl AesCmac for NoOpAesCmac {
     }
 }
 
+/// Stub implementation of [`Rsa`].
 pub struct NoOpRsa;
 impl Rsa for NoOpRsa {
     fn generate_key(
@@ -584,6 +596,7 @@ impl Rsa for NoOpRsa {
     }
 }
 
+/// Stub implementation of [`Ec`].
 pub struct NoOpEc;
 impl Ec for NoOpEc {
     fn generate_nist_key(
@@ -639,6 +652,7 @@ impl Ec for NoOpEc {
     }
 }
 
+/// Stub implementation of [`keyblob::SecureDeletionSecretManager`].
 pub struct NoOpSdsManager;
 impl keyblob::SecureDeletionSecretManager for NoOpSdsManager {
     fn get_or_create_factory_reset_secret(

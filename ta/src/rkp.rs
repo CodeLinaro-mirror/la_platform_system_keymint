@@ -44,6 +44,7 @@ const RPC_P256_KEYGEN_PARAMS: [KeyParam; 8] = [
 const MAX_CHALLENGE_SIZE_V2: usize = 64;
 
 impl<'a> KeyMintTa<'a> {
+    /// Return the CBOR-encoded `DeviceInfo`.
     pub fn rpc_device_info(&self) -> Result<Vec<u8>, Error> {
         let info = self.rpc_device_info_cbor()?;
         serialize_cbor(&info)
@@ -186,7 +187,7 @@ impl<'a> KeyMintTa<'a> {
             return Err(rpc_err!(Removed, "generate_cert_req is not supported in IRPC V3+ HAL."));
         }
         let _device_info = self.rpc_device_info()?;
-        Err(km_err!(Unimplemented, "TODO: GenerateCertificateRequest"))
+        Err(km_err!(Unimplemented, "GenerateCertificateRequest is only required for RKP before v3"))
     }
 
     pub(crate) fn generate_cert_req_v2(

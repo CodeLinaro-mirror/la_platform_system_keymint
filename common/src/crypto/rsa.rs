@@ -120,8 +120,16 @@ impl OpaqueOr<Key> {
 /// RSA decryption mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecryptionMode {
+    /// No padding.
     NoPadding,
-    OaepPadding { msg_digest: Digest, mgf_digest: Digest },
+    /// RSA-OAEP padding.
+    OaepPadding {
+        /// Digest to use for the message
+        msg_digest: Digest,
+        /// Digest to use in the MGF1 function.
+        mgf_digest: Digest,
+    },
+    /// PKCS#1 v1.5 padding.
     Pkcs1_1_5Padding,
 }
 
@@ -149,8 +157,11 @@ impl DecryptionMode {
 /// RSA signature mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SignMode {
+    /// No padding.
     NoPadding,
+    /// RSA-PSS signature scheme using the given digest.
     PssPadding(Digest),
+    /// PKCS#1 v1.5 padding using the given digest.
     Pkcs1_1_5Padding(Digest),
 }
 
