@@ -1,6 +1,6 @@
 //! Traits representing abstractions of cryptographic functionality.
 use super::*;
-use crate::{crypto::ec::Key, explicit, keyblob, vec_try, Error};
+use crate::{crypto::ec::Key, der_err, explicit, keyblob, vec_try, Error};
 use alloc::{boxed::Box, vec::Vec};
 use der::Decode;
 use kmr_wire::{keymint, keymint::Digest, KeySizeInBits, RsaExponent};
@@ -347,7 +347,8 @@ pub trait Ec {
             | Key::P256(nist_key)
             | Key::P384(nist_key)
             | Key::P521(nist_key) => {
-                let ec_pvt_key = sec1::EcPrivateKey::from_der(nist_key.0.as_slice())?;
+                let ec_pvt_key = sec1::EcPrivateKey::from_der(nist_key.0.as_slice())
+                    .map_err(|e| der_err!(e, "failed to parse DER NIST EC PrivateKey"))?;
                 match ec_pvt_key.public_key {
                     Some(pub_key) => Ok(pub_key.to_vec()),
                     None => {

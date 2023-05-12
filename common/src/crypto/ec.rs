@@ -1,7 +1,7 @@
 //! Functionality related to elliptic curve support.
 
 use super::{CurveType, KeyMaterial, OpaqueOr};
-use crate::{km_err, try_to_vec, Error, FallibleAllocExt};
+use crate::{der_err, km_err, try_to_vec, Error, FallibleAllocExt};
 use alloc::vec::Vec;
 use der::{AnyRef, Decode};
 use kmr_wire::{coset, keymint::EcCurve, rpc, KeySizeInBits};
@@ -364,7 +364,8 @@ pub fn curve_to_key_size(curve: EcCurve) -> KeySizeInBits {
 
 /// Import an NIST EC key in SEC1 ECPrivateKey format.
 pub fn import_sec1_private_key(data: &[u8]) -> Result<KeyMaterial, Error> {
-    let ec_key = sec1::EcPrivateKey::from_der(data)?;
+    let ec_key = sec1::EcPrivateKey::from_der(data)
+        .map_err(|e| der_err!(e, "failed to parse ECPrivateKey"))?;
     let ec_parameters = ec_key.parameters.ok_or_else(|| {
         km_err!(InvalidArgument, "sec1 formatted EC private key didn't have a parameters field")
     })?;

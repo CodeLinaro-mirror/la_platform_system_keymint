@@ -72,6 +72,17 @@ macro_rules! alloc_err {
     }
 }
 
+/// Macro to build an [`Error::Der`] instance from a [`der::Error`].
+#[macro_export]
+macro_rules! der_err {
+    { $err:expr, $($arg:tt)+ } => {
+        {
+            log::warn!("{}: {:?} at {:?}", format_args!($($arg)+), $err, $err.position());
+            $crate::Error::Der($err.kind())
+        }
+    }
+}
+
 /// Macro to build an [`Error::Rpc`] instance for a specific [`rpc::ErrorCode`] value known at
 /// compile time: `rpc_err!(Removed, "some {} format", arg)`.
 #[macro_export]
@@ -173,12 +184,6 @@ impl From<CborError> for Error {
 impl From<cbor::value::Error> for Error {
     fn from(e: cbor::value::Error) -> Self {
         Self::Cbor(e.into())
-    }
-}
-
-impl From<der::Error> for Error {
-    fn from(e: der::Error) -> Self {
-        Error::Der(e.kind())
     }
 }
 

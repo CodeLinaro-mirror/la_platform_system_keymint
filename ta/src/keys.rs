@@ -7,8 +7,8 @@ use core::{borrow::Borrow, cmp::Ordering, convert::TryFrom};
 use der::{Decode, Sequence};
 use kmr_common::{
     crypto::{self, aes, rsa, KeyMaterial, OpaqueOr},
-    get_bool_tag_value, get_opt_tag_value, get_tag_value, keyblob, km_err, tag, try_to_vec,
-    vec_try_with_capacity, Error, FallibleAllocExt,
+    der_err, get_bool_tag_value, get_opt_tag_value, get_tag_value, keyblob, km_err, tag,
+    try_to_vec, vec_try_with_capacity, Error, FallibleAllocExt,
 };
 use kmr_wire::{
     keymint::{
@@ -124,14 +124,17 @@ impl<'a> crate::KeyMintTa<'a> {
     ) -> Result<keymint::Certificate, Error> {
         // Build and encode key usage extension value
         let key_usage_ext_bits = cert::key_usage_extension_bits(params);
-        let key_usage_ext_val = cert::asn1_der_encode(&key_usage_ext_bits)?;
+        let key_usage_ext_val = cert::asn1_der_encode(&key_usage_ext_bits)
+            .map_err(|e| der_err!(e, "failed to encode KeyUsage {:?}", key_usage_ext_bits))?;
 
         // Build and encode basic constraints extension value, based on the key usage extension
         // value
         let basic_constraints_ext_val =
             if (key_usage_ext_bits.0 & KeyUsages::KeyCertSign).bits().count_ones() != 0 {
                 let basic_constraints = cert::basic_constraints_ext_value(true);
-                Some(cert::asn1_der_encode(&basic_constraints)?)
+                Some(cert::asn1_der_encode(&basic_constraints).map_err(|e| {
+                    der_err!(e, "failed to encode basic constraints {:?}", basic_constraints)
+                })?)
             } else {
                 None
             };
@@ -153,7 +156,10 @@ impl<'a> crate::KeyMintTa<'a> {
                         km_err!(HardwareNotYetAvailable, "root of trust info not found")
                     })?,
                 )?;
-                Some(cert::asn1_der_encode(&attest_ext)?)
+                Some(
+                    cert::asn1_der_encode(&attest_ext)
+                        .map_err(|e| der_err!(e, "failed to encode attestation extension"))?,
+                )
             } else {
                 None
             };
@@ -167,7 +173,8 @@ impl<'a> crate::KeyMintTa<'a> {
             tag::characteristics_at(chars, self.hw_info.security_level)?,
             params,
         )?;
-        let tbs_data = cert::asn1_der_encode(&tbs_cert)?;
+        let tbs_data = cert::asn1_der_encode(&tbs_cert)
+            .map_err(|e| der_err!(e, "failed to encode tbsCert"))?;
         // If key does not have ATTEST_KEY or SIGN purpose, the certificate has empty signature
         let sig_data = match info.as_ref() {
             Some(info) => self.sign_cert_data(info.signing_key.clone(), tbs_data.as_slice())?,
@@ -175,7 +182,8 @@ impl<'a> crate::KeyMintTa<'a> {
         };
 
         let cert = cert::certificate(tbs_cert, &sig_data)?;
-        let cert_data = cert::asn1_der_encode(&cert)?;
+        let cert_data = cert::asn1_der_encode(&cert)
+            .map_err(|e| der_err!(e, "failed to encode certificate"))?;
         Ok(keymint::Certificate { encoded_certificate: cert_data })
     }
 
@@ -495,7 +503,8 @@ impl<'a> crate::KeyMintTa<'a> {
         let keyblob::PlaintextKeyBlob { characteristics, key_material } = wrapping_key;
 
         // Decode the ASN.1 DER encoded `SecureKeyWrapper`.
-        let mut secure_key_wrapper = SecureKeyWrapper::from_der(wrapped_key_data)?;
+        let mut secure_key_wrapper = SecureKeyWrapper::from_der(wrapped_key_data)
+            .map_err(|e| der_err!(e, "failed to parse SecureKeyWrapper"))?;
 
         if secure_key_wrapper.version != SECURE_KEY_WRAPPER_VERSION {
             return Err(km_err!(InvalidArgument, "invalid version in Secure Key Wrapper."));
@@ -590,7 +599,10 @@ impl<'a> crate::KeyMintTa<'a> {
             gcm_mode,
             crypto::SymmetricOperation::Decrypt,
         )?;
-        op.update_aad(&cert::asn1_der_encode(&secure_key_wrapper.key_description)?)?;
+        op.update_aad(
+            &cert::asn1_der_encode(&secure_key_wrapper.key_description)
+                .map_err(|e| der_err!(e, "failed to re-encode SecureKeyWrapper"))?,
+        )?;
 
         let mut imported_key_data = op.update(secure_key_wrapper.encrypted_key)?;
         imported_key_data.try_extend_from_slice(&op.update(secure_key_wrapper.tag)?)?;
