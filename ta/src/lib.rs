@@ -68,17 +68,17 @@ struct AttestationChainInfo {
 }
 
 /// KeyMint device implementation, running in secure environment.
-pub struct KeyMintTa<'a> {
+pub struct KeyMintTa {
     /**
      * State that is fixed on construction.
      */
 
     /// Trait objects that hold this device's implementations of the abstract cryptographic
     /// functionality traits.
-    imp: crypto::Implementation<'a>,
+    imp: crypto::Implementation,
 
     /// Trait objects that hold this device's implementations of per-device functionality.
-    dev: device::Implementation<'a>,
+    dev: device::Implementation,
 
     /// Information about this particular KeyMint implementation's hardware.
     hw_info: HardwareInfo,
@@ -275,13 +275,13 @@ pub struct HalInfo {
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct KeyId([u8; 32]);
 
-impl<'a> KeyMintTa<'a> {
+impl KeyMintTa {
     /// Create a new [`KeyMintTa`] instance.
     pub fn new(
         hw_info: HardwareInfo,
         rpc_info: RpcInfo,
-        imp: crypto::Implementation<'a>,
-        dev: device::Implementation<'a>,
+        imp: crypto::Implementation,
+        dev: device::Implementation,
     ) -> Self {
         let max_operations = if hw_info.security_level == SecurityLevel::Strongbox {
             MAX_STRONGBOX_OPERATIONS
@@ -371,10 +371,10 @@ impl<'a> KeyMintTa<'a> {
         let keyblob = keyblob::decrypt(
             match &self.dev.sdd_mgr {
                 None => None,
-                Some(mr) => Some(*mr),
+                Some(mr) => Some(&**mr),
             },
-            self.imp.aes,
-            self.imp.hkdf,
+            &*self.imp.aes,
+            &*self.imp.hkdf,
             &root_kek,
             encrypted_keyblob,
             hidden,
@@ -1074,7 +1074,7 @@ impl<'a> KeyMintTa<'a> {
     }
 
     fn convert_storage_key_to_ephemeral(&self, keyblob: &[u8]) -> Result<Vec<u8>, Error> {
-        if let Some(sk_wrapper) = self.dev.sk_wrapper {
+        if let Some(sk_wrapper) = &self.dev.sk_wrapper {
             // Parse and decrypt the keyblob. Note that there is no way to provide extra hidden
             // params on the API.
             let (keyblob, _) = self.keyblob_parse_decrypt(keyblob, &[])?;
@@ -1114,7 +1114,7 @@ impl<'a> KeyMintTa<'a> {
     /// Generate an HMAC-SHA256 value over the data using the device's HMAC key (if available).
     fn device_hmac(&self, data: &[u8]) -> Result<Vec<u8>, Error> {
         match &self.device_hmac {
-            Some(traitobj) => traitobj.hmac(self.imp.hmac, data),
+            Some(traitobj) => traitobj.hmac(&*self.imp.hmac, data),
             None => {
                 error!("HMAC requested but no key available!");
                 Err(km_err!(HardwareNotYetAvailable, "HMAC key not agreed"))

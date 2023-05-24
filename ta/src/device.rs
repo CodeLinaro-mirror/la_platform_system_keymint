@@ -19,36 +19,36 @@ pub const RPC_HMAC_KEY_CONTEXT: &[u8] = b"Key to MAC public keys";
 pub const RPC_HMAC_KEY_LEN: usize = 32;
 
 /// Combined collection of trait implementations that must be provided.
-pub struct Implementation<'a> {
+pub struct Implementation {
     /// Retrieval of root key material.
-    pub keys: &'a dyn RetrieveKeyMaterial,
+    pub keys: Box<dyn RetrieveKeyMaterial>,
 
     /// Retrieval of attestation certificate signing information.
-    pub sign_info: &'a dyn RetrieveCertSigningInfo,
+    pub sign_info: Box<dyn RetrieveCertSigningInfo>,
 
     /// Retrieval of attestation ID information.
-    pub attest_ids: Option<&'a mut dyn RetrieveAttestationIds>,
+    pub attest_ids: Option<Box<dyn RetrieveAttestationIds>>,
 
     /// Secure deletion secret manager.  If not available, rollback-resistant
     /// keys will not be supported.
-    pub sdd_mgr: Option<&'a mut dyn keyblob::SecureDeletionSecretManager>,
+    pub sdd_mgr: Option<Box<dyn keyblob::SecureDeletionSecretManager>>,
 
     /// Retrieval of bootloader status.
-    pub bootloader: &'a dyn BootloaderStatus,
+    pub bootloader: Box<dyn BootloaderStatus>,
 
     /// Storage key wrapping. If not available `convertStorageKeyToEphemeral()` will not be
     /// supported
-    pub sk_wrapper: Option<&'a dyn StorageKeyWrapper>,
+    pub sk_wrapper: Option<Box<dyn StorageKeyWrapper>>,
 
     /// Trusted user presence indicator.
-    pub tup: &'a dyn TrustedUserPresence,
+    pub tup: Box<dyn TrustedUserPresence>,
 
     /// Legacy key conversion handling.
-    pub legacy_key: Option<&'a mut dyn keyblob::LegacyKeyHandler>,
+    pub legacy_key: Option<Box<dyn keyblob::LegacyKeyHandler>>,
 
     /// Retrieval of artifacts related to the device implementation of IRemotelyProvisionedComponent
     /// (IRPC) HAL.
-    pub rpc: &'a dyn RetrieveRpcArtifacts,
+    pub rpc: Box<dyn RetrieveRpcArtifacts>,
 }
 
 /// Functionality related to retrieval of device-specific key material, and its subsequent use.

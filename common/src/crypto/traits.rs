@@ -7,37 +7,37 @@ use kmr_wire::{keymint, keymint::Digest, KeySizeInBits, RsaExponent};
 use log::{error, warn};
 
 /// Combined collection of trait implementations that must be provided.
-pub struct Implementation<'a> {
+pub struct Implementation {
     /// Random number generator.
-    pub rng: &'a mut dyn Rng,
+    pub rng: Box<dyn Rng>,
 
     /// A local clock, if available. If not available, KeyMint will require timestamp tokens to
     /// be provided by an external `ISecureClock` (with which it shares a common key).
-    pub clock: Option<&'a dyn MonotonicClock>,
+    pub clock: Option<Box<dyn MonotonicClock>>,
 
     /// A constant-time equality implementation.
-    pub compare: &'a dyn ConstTimeEq,
+    pub compare: Box<dyn ConstTimeEq>,
 
     /// AES implementation.
-    pub aes: &'a dyn Aes,
+    pub aes: Box<dyn Aes>,
 
     /// DES implementation.
-    pub des: &'a dyn Des,
+    pub des: Box<dyn Des>,
 
     /// HMAC implementation.
-    pub hmac: &'a dyn Hmac,
+    pub hmac: Box<dyn Hmac>,
 
     /// RSA implementation.
-    pub rsa: &'a dyn Rsa,
+    pub rsa: Box<dyn Rsa>,
 
     /// EC implementation.
-    pub ec: &'a dyn Ec,
+    pub ec: Box<dyn Ec>,
 
     /// CKDF implementation.
-    pub ckdf: &'a dyn Ckdf,
+    pub ckdf: Box<dyn Ckdf>,
 
     /// HKDF implementation.
-    pub hkdf: &'a dyn Hkdf,
+    pub hkdf: Box<dyn Hkdf>,
 }
 
 /// Abstraction of a random number generator that is cryptographically secure

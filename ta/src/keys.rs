@@ -84,12 +84,12 @@ pub(crate) struct SigningInfo<'a> {
     pub chain: Vec<keymint::Certificate>,
 }
 
-impl<'a> crate::KeyMintTa<'a> {
+impl crate::KeyMintTa {
     /// Retrieve the signing information.
     pub(crate) fn get_signing_info(
         &self,
         key_type: device::SigningKeyType,
-    ) -> Result<SigningInfo<'a>, Error> {
+    ) -> Result<SigningInfo, Error> {
         // Retrieve the chain and issuer information, which is cached after first retrieval.
         let mut attestation_chain_info = self.attestation_chain_info.borrow_mut();
         let chain_info = match attestation_chain_info.entry(key_type) {
@@ -228,7 +228,7 @@ impl<'a> crate::KeyMintTa<'a> {
         combined_input.extend_from_slice(app_id);
         combined_input.push(u8::from(get_bool_tag_value!(params, ResetSinceIdRotation)?));
 
-        let hbk = self.dev.keys.unique_id_hbk(self.imp.ckdf)?;
+        let hbk = self.dev.keys.unique_id_hbk(&*self.imp.ckdf)?;
 
         let mut hmac_op = self.imp.hmac.begin(hbk.into(), Digest::Sha256)?;
         hmac_op.update(&combined_input)?;
@@ -348,8 +348,8 @@ impl<'a> crate::KeyMintTa<'a> {
         let mut certificate_chain = Vec::new();
         if let Some(spki) = keyblob.key_material.subject_public_key_info(
             &mut Vec::<u8>::new(),
-            self.imp.ec,
-            self.imp.rsa,
+            &*self.imp.ec,
+            &*self.imp.rsa,
         )? {
             // Asymmetric keys return the public key inside an X.509 certificate.
             // Need to determine:
@@ -469,10 +469,10 @@ impl<'a> crate::KeyMintTa<'a> {
             self.hw_info.security_level,
             match &mut self.dev.sdd_mgr {
                 None => None,
-                Some(mr) => Some(*mr),
+                Some(mr) => Some(&mut **mr),
             },
-            self.imp.aes,
-            self.imp.hkdf,
+            &*self.imp.aes,
+            &*self.imp.hkdf,
             &mut *self.imp.rng,
             &root_kek,
             &kek_context,
@@ -769,10 +769,10 @@ impl<'a> crate::KeyMintTa<'a> {
             self.hw_info.security_level,
             match &mut self.dev.sdd_mgr {
                 None => None,
-                Some(mr) => Some(*mr),
+                Some(mr) => Some(&mut **mr),
             },
-            self.imp.aes,
-            self.imp.hkdf,
+            &*self.imp.aes,
+            &*self.imp.hkdf,
             &mut *self.imp.rng,
             &root_kek,
             &kek_context,

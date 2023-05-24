@@ -279,12 +279,16 @@ pub fn extract_key_import_characteristics(
     key_data: &[u8],
 ) -> Result<(Vec<KeyCharacteristics>, KeyMaterial), Error> {
     let (deduced_params, key_material) = match get_algorithm(params)? {
-        Algorithm::Rsa => check_rsa_import_params(imp.rsa, params, sec_level, key_format, key_data),
-        Algorithm::Ec => check_ec_import_params(imp.ec, params, sec_level, key_format, key_data),
-        Algorithm::Aes => check_aes_import_params(imp.aes, params, sec_level, key_format, key_data),
-        Algorithm::TripleDes => check_3des_import_params(imp.des, params, key_format, key_data),
+        Algorithm::Rsa => {
+            check_rsa_import_params(&*imp.rsa, params, sec_level, key_format, key_data)
+        }
+        Algorithm::Ec => check_ec_import_params(&*imp.ec, params, sec_level, key_format, key_data),
+        Algorithm::Aes => {
+            check_aes_import_params(&*imp.aes, params, sec_level, key_format, key_data)
+        }
+        Algorithm::TripleDes => check_3des_import_params(&*imp.des, params, key_format, key_data),
         Algorithm::Hmac => {
-            check_hmac_import_params(imp.hmac, params, sec_level, key_format, key_data)
+            check_hmac_import_params(&*imp.hmac, params, sec_level, key_format, key_data)
         }
     }?;
     Ok((
