@@ -43,7 +43,8 @@ const RPC_P256_KEYGEN_PARAMS: [KeyParam; 8] = [
 
 const MAX_CHALLENGE_SIZE_V2: usize = 64;
 
-impl<'a> KeyMintTa<'a> {
+impl KeyMintTa {
+    /// Return the CBOR-encoded `DeviceInfo`.
     pub fn rpc_device_info(&self) -> Result<Vec<u8>, Error> {
         let info = self.rpc_device_info_cbor()?;
         serialize_cbor(&info)
@@ -145,7 +146,7 @@ impl<'a> KeyMintTa<'a> {
 
         let pub_cose_key = match key_material {
             KeyMaterial::Ec(curve, curve_type, ref key) => key.public_cose_key(
-                self.imp.ec,
+                &*self.imp.ec,
                 curve,
                 curve_type,
                 CoseKeyPurpose::Sign,
@@ -159,9 +160,9 @@ impl<'a> KeyMintTa<'a> {
             build_maced_pub_key(pub_cose_key_encoded, |data| -> Result<Vec<u8>, Error> {
                 // In test mode, use an all-zero HMAC key.
                 if test_mode == rpc::TestMode(true) {
-                    return hmac_sha256(self.imp.hmac, &[0; 32], data);
+                    return hmac_sha256(&*self.imp.hmac, &[0; 32], data);
                 }
-                self.dev.rpc.compute_hmac_sha256(self.imp.hmac, self.imp.hkdf, data)
+                self.dev.rpc.compute_hmac_sha256(&*self.imp.hmac, &*self.imp.hkdf, data)
             })?;
 
         let key_result = self.finish_keyblob_creation(
@@ -186,7 +187,7 @@ impl<'a> KeyMintTa<'a> {
             return Err(rpc_err!(Removed, "generate_cert_req is not supported in IRPC V3+ HAL."));
         }
         let _device_info = self.rpc_device_info()?;
-        Err(km_err!(Unimplemented, "TODO: GenerateCertificateRequest"))
+        Err(km_err!(Unimplemented, "GenerateCertificateRequest is only required for RKP before v3"))
     }
 
     pub(crate) fn generate_cert_req_v2(
@@ -236,7 +237,7 @@ impl<'a> KeyMintTa<'a> {
 
             cose_mac0.verify_tag(&[], |expected_tag, data| -> Result<(), Error> {
                 let computed_tag =
-                    self.dev.rpc.compute_hmac_sha256(self.imp.hmac, self.imp.hkdf, data)?;
+                    self.dev.rpc.compute_hmac_sha256(&*self.imp.hmac, &*self.imp.hkdf, data)?;
                 if self.imp.compare.eq(expected_tag, &computed_tag) {
                     Ok(())
                 } else {
@@ -266,7 +267,7 @@ impl<'a> KeyMintTa<'a> {
 
         // Get `SignedData`
         let signed_data_cbor = read_to_value(&self.dev.rpc.sign_data_in_cose_sign1(
-            self.imp.ec,
+            &*self.imp.ec,
             &dice_info.signing_algorithm,
             &signed_data_payload_data,
             &[],
