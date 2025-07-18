@@ -851,13 +851,25 @@ impl KeyMintTa {
                 Ok(_ret) => op_ok_rsp(PerformOpRsp::DeviceDeleteAllKeys(DeleteAllKeysResponse {})),
                 Err(e) => op_error_rsp(DeleteAllKeysRequest::CODE, e),
             },
-            PerformOpReq::DeviceDestroyAttestationIds(_req) => match self.destroy_attestation_ids()
-            {
-                Ok(_ret) => op_ok_rsp(PerformOpRsp::DeviceDestroyAttestationIds(
-                    DestroyAttestationIdsResponse {},
-                )),
-                Err(e) => op_error_rsp(DestroyAttestationIdsRequest::CODE, e),
-            },
+            PerformOpReq::DeviceDestroyAttestationIds(_req) => {
+                let aidl_version = self.aidl_version as i32;
+                if aidl_version >= 500 {
+                    let error: Error = ErrorKind::Hal(
+                        ErrorCode::Unimplemented,
+                        format!(
+                            "AIDL version ({aidl_version:?}) >= 500 doesn't support destroying attestation IDs",
+                        ),
+                    )
+                    .into();
+                    return op_error_rsp(DestroyAttestationIdsRequest::CODE, error);
+                }
+                match self.destroy_attestation_ids() {
+                    Ok(_ret) => op_ok_rsp(PerformOpRsp::DeviceDestroyAttestationIds(
+                        DestroyAttestationIdsResponse {},
+                    )),
+                    Err(e) => op_error_rsp(DestroyAttestationIdsRequest::CODE, e),
+                }
+            }
             PerformOpReq::DeviceBegin(req) => {
                 match self.begin_operation(req.purpose, &req.key_blob, req.params, req.auth_token) {
                     Ok(ret) => op_ok_rsp(PerformOpRsp::DeviceBegin(BeginResponse { ret })),
