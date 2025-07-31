@@ -43,6 +43,8 @@ use thiserror::Error;
 pub use binder;
 
 pub mod env;
+#[cfg(feature = "hal_v5")]
+pub mod frp;
 pub mod hal;
 pub mod keymint;
 pub mod rpc;
@@ -62,6 +64,9 @@ pub enum Hal {
     SecureClock,
     /// ISharedSecret HAL.
     SharedSecret,
+    #[cfg(feature = "hal_v5")]
+    /// IFactoryResetProtection HAL.
+    FactoryResetProtection,
 }
 
 impl fmt::Display for Hal {
@@ -74,6 +79,10 @@ impl fmt::Display for Hal {
             }
             Self::SecureClock => "android.hardware.security.secureclock.ISecureClock",
             Self::SharedSecret => "android.hardware.security.sharedsecret.ISharedSecret",
+            #[cfg(feature = "hal_v5")]
+            Self::FactoryResetProtection => {
+                "android.hardware.security.factory_reset_protection.IFactoryResetProtection"
+            }
         })
     }
 }
@@ -90,13 +99,21 @@ impl Hal {
             }
             Hal::SecureClock => secureclock::Device::new_as_binder(channel.clone()).as_binder(),
             Hal::SharedSecret => sharedsecret::Device::new_as_binder(channel.clone()).as_binder(),
+            #[cfg(feature = "hal_v5")]
+            Hal::FactoryResetProtection => frp::Device::new_as_binder(channel.clone()).as_binder(),
         }
     }
 }
 
 /// A list of all HAL services that are registered by default.
-pub const ALL_HALS: &[Hal] =
-    &[Hal::KeyMintDevice, Hal::RemotelyProvisionedComponent, Hal::SecureClock, Hal::SharedSecret];
+pub const ALL_HALS: &[Hal] = &[
+    Hal::KeyMintDevice,
+    Hal::RemotelyProvisionedComponent,
+    Hal::SecureClock,
+    Hal::SharedSecret,
+    #[cfg(feature = "hal_v5")]
+    Hal::FactoryResetProtection,
+];
 
 /// Emit a failure for a failed CBOR conversion.
 #[inline]

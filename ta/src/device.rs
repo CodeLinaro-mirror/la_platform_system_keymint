@@ -63,6 +63,12 @@ pub struct Implementation {
     /// Retrieval of artifacts related to the device implementation of IRemotelyProvisionedComponent
     /// (IRPC) HAL.
     pub rpc: Box<dyn RetrieveRpcArtifacts>,
+
+    /// Storage and retrieval of FRP secret data.
+    pub frp_secret_storage: Option<Box<dyn FrpSecretStorage>>,
+
+    /// Storage and retrieval of additional FRP data.
+    pub frp_data_storage: Option<Box<dyn FrpDataStorage>>,
 }
 
 /// Functionality related to retrieval of device-specific key material, and its subsequent use.
@@ -343,6 +349,45 @@ impl TrustedUserPresence for TrustedPresenceUnsupported {}
 pub trait StorageKeyWrapper {
     /// Wrap the provided key material using an ephemeral storage key.
     fn ephemeral_wrap(&self, key_material: &KeyMaterial) -> Result<Vec<u8>, Error>;
+}
+
+/// FRP secret storage provider.  This is optional, but strongly recommended, and will become
+/// mandatory in the future.  If not implemented, this KeyMint will not provide functional
+/// IFactoryResetProtection.
+///
+/// FRP secret storage must survive factory reset and must be secure, meaning that attackers
+/// cannot read or modify it.
+pub trait FrpSecretStorage {
+    /// Store the FRP secret.  Updates must be atomic, meaning that if this method returns
+    /// `Ok(())`, the secret must have been successfully persisted and if it returns an error the
+    /// storage must not have been modified.
+    fn store_secret(&mut self, secret: [u8; 32]) -> Result<(), Error>;
+    /// Retrieve the FRP secret. Returns `[0; 32]` if no secret has been stored.
+    fn retrieve_secret(&self) -> Result<[u8; 32], Error>;
+}
+
+/// FRP data storage provider.  This is optional, but recommended.
+///
+/// FRP data storage must survive factory reset but need not be secure.  Methods that modify the
+/// state of storage must be atomic, meaning that if they return `Ok(())` the data must have been
+/// successfully persisted and if they return an error the storage must not have been modified.
+///
+/// If provided, FRP data storage must provide 16 KiB of total storage, including keys and
+/// data.  Keys are UTF-8 strings no more than 16 bytes in length.  If a storage request would
+/// cause storage consumed to exceed 16 KiB and the implementation cannot support more than 16
+/// KiB, or if a key more than 16 bytes in length is provied,
+//  [`Err(frp_err!(IllegalArgument, "<some string>"))`], should be returned.
+pub trait FrpDataStorage {
+    /// Store the specified data under the specified key, overwriting any previous value.
+    fn store_data(&mut self, key: &str, data: &[u8]) -> Result<(), Error>;
+    /// Retrieve data previously stored under the specified key.  Returns `None` if the key was
+    /// not found.
+    fn retrieve_data(&self, key: &str) -> Result<Option<Vec<u8>>, Error>;
+    /// Delete data previously stored under the specified key, if any.  Does not return an
+    /// error if the key is not found.
+    fn delete_data(&mut self, key: &str) -> Result<(), Error>;
+    /// Delete all stored data.
+    fn clear(&mut self) -> Result<(), Error>;
 }
 
 // No-op implementations for the non-optional device traits. These implementations are only
