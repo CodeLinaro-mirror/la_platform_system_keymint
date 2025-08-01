@@ -423,7 +423,7 @@ pub struct AuthorizationList<'a> {
     pub encode_sid: bool,
     pub keygen_params: Cow<'a, [KeyParam]>,
     pub rot_info: Option<Vec<u8>>,
-    pub app_id: Option<KeyParam>,
+    pub app_id: Option<Cow<'a, [u8]>>,
     pub additional_attestation_info: Cow<'a, [KeyParam]>,
 }
 
@@ -574,10 +574,7 @@ impl<'a> AuthorizationList<'a> {
             encode_sid: false,
             keygen_params: keygen_params.into(),
             rot_info: encoded_rot,
-            app_id: match app_id {
-                Some(app_id) => Some(KeyParam::AttestationApplicationId(try_to_vec(app_id)?)),
-                None => None,
-            },
+            app_id: app_id.map(Into::into),
             additional_attestation_info: additional_attestation_info.into(),
         })
     }
@@ -599,14 +596,14 @@ impl<'a> AuthorizationList<'a> {
         let mut auths = Vec::new();
         let mut keygen_params = Vec::new();
         let mut rot: Option<Vec<u8>> = None;
-        let mut attest_app_id: Option<KeyParam> = None;
+        let mut attest_app_id: Option<Cow<'a, [u8]>> = None;
         let mut additional_attestation_info = Vec::new();
 
         // Divide key parameters into key characteristics and key generation parameters.
         for param in key_params {
             match param {
                 KeyParam::RootOfTrust(encoded_rot) => rot = Some(encoded_rot),
-                KeyParam::AttestationApplicationId(_) => attest_app_id = Some(param),
+                KeyParam::AttestationApplicationId(app_id) => attest_app_id = Some(app_id.into()),
                 KeyParam::AttestationIdBrand(_)
                 | KeyParam::AttestationIdDevice(_)
                 | KeyParam::AttestationIdProduct(_)
@@ -1139,11 +1136,11 @@ impl EncodeValue for AuthorizationList<'_> {
         length = length
             + asn1_len(asn1_integer!(self.auths, OsVersion))?
             + asn1_len(asn1_integer!(self.auths, OsPatchlevel))?;
-        if let Some(KeyParam::AttestationApplicationId(app_id)) = &self.app_id {
+        if let Some(app_id) = &self.app_id {
             length = length
                 + ExplicitTaggedValue {
                     tag: raw_tag_value(Tag::AttestationApplicationId),
-                    val: der::asn1::OctetStringRef::new(app_id.as_slice())?,
+                    val: der::asn1::OctetStringRef::new(app_id)?,
                 }
                 .encoded_len()?;
         }
@@ -1208,10 +1205,10 @@ impl EncodeValue for AuthorizationList<'_> {
         asn1_val(asn1_integer!(self.auths, OsVersion), writer)?;
         asn1_val(asn1_integer!(self.auths, OsPatchlevel), writer)?;
         // Attestation application ID is a special case (not in key characteristics).
-        if let Some(KeyParam::AttestationApplicationId(app_id)) = &self.app_id {
+        if let Some(app_id) = &self.app_id {
             ExplicitTaggedValue {
                 tag: raw_tag_value(Tag::AttestationApplicationId),
-                val: der::asn1::OctetStringRef::new(app_id.as_slice())?,
+                val: der::asn1::OctetStringRef::new(app_id)?,
             }
             .encode(writer)?;
         }
