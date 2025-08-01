@@ -422,7 +422,7 @@ pub struct AuthorizationList<'a> {
     /// Whether to include `UserSecureId` value if found in `auths` when encoding.
     pub encode_sid: bool,
     pub keygen_params: Cow<'a, [KeyParam]>,
-    pub rot_info: Option<KeyParam>,
+    pub rot_info: Option<Vec<u8>>,
     pub app_id: Option<KeyParam>,
     pub additional_attestation_info: Cow<'a, [KeyParam]>,
 }
@@ -573,7 +573,7 @@ impl<'a> AuthorizationList<'a> {
             auths: auths.into(),
             encode_sid: false,
             keygen_params: keygen_params.into(),
-            rot_info: encoded_rot.map(KeyParam::RootOfTrust),
+            rot_info: encoded_rot,
             app_id: match app_id {
                 Some(app_id) => Some(KeyParam::AttestationApplicationId(try_to_vec(app_id)?)),
                 None => None,
@@ -598,14 +598,14 @@ impl<'a> AuthorizationList<'a> {
     fn new_from_key_params(key_params: Vec<KeyParam>) -> Result<Self, der::Error> {
         let mut auths = Vec::new();
         let mut keygen_params = Vec::new();
-        let mut rot: Option<KeyParam> = None;
+        let mut rot: Option<Vec<u8>> = None;
         let mut attest_app_id: Option<KeyParam> = None;
         let mut additional_attestation_info = Vec::new();
 
         // Divide key parameters into key characteristics and key generation parameters.
         for param in key_params {
             match param {
-                KeyParam::RootOfTrust(_) => rot = Some(param),
+                KeyParam::RootOfTrust(encoded_rot) => rot = Some(encoded_rot),
                 KeyParam::AttestationApplicationId(_) => attest_app_id = Some(param),
                 KeyParam::AttestationIdBrand(_)
                 | KeyParam::AttestationIdDevice(_)
@@ -1128,7 +1128,7 @@ impl EncodeValue for AuthorizationList<'_> {
             + asn1_len(asn1_null!(self.auths, UnlockedDeviceRequired))?
             + asn1_len(asn1_integer_datetime!(self.auths, CreationDatetime))?
             + asn1_len(asn1_integer!(self.auths, Origin))?;
-        if let Some(KeyParam::RootOfTrust(encoded_rot_info)) = &self.rot_info {
+        if let Some(encoded_rot_info) = &self.rot_info {
             length = length
                 + ExplicitTaggedValue {
                     tag: raw_tag_value(Tag::RootOfTrust),
@@ -1198,7 +1198,7 @@ impl EncodeValue for AuthorizationList<'_> {
         asn1_val(asn1_integer_datetime!(self.auths, CreationDatetime), writer)?;
         asn1_val(asn1_integer!(self.auths, Origin), writer)?;
         // Root of trust info is a special case (not in key characteristics).
-        if let Some(KeyParam::RootOfTrust(encoded_rot_info)) = &self.rot_info {
+        if let Some(encoded_rot_info) = &self.rot_info {
             ExplicitTaggedValue {
                 tag: raw_tag_value(Tag::RootOfTrust),
                 val: RootOfTrust::from_der(encoded_rot_info.as_slice())?,
