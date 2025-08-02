@@ -424,7 +424,7 @@ pub struct AuthorizationList<'a> {
     pub ids: AttestationIds<'a>,
     pub rot_info: Option<Vec<u8>>,
     pub app_id: Option<Cow<'a, [u8]>>,
-    pub additional_attestation_info: Cow<'a, [KeyParam]>,
+    pub module_hash: Option<Cow<'a, [u8]>>,
 }
 
 /// Tags used in `AuthorizationList` in the schema-defined order.
@@ -599,13 +599,14 @@ impl<'a> AuthorizationList<'a> {
         } else {
             None
         };
+        let module_hash = get_opt_tag_value!(additional_attestation_info, ModuleHash)?;
         Ok(Self {
             auths: auths.into(),
             encode_sid: false,
             ids: requested_ids,
             rot_info: encoded_rot,
             app_id: app_id.map(Into::into),
-            additional_attestation_info: additional_attestation_info.into(),
+            module_hash: module_hash.map(Into::into),
         })
     }
 
@@ -627,7 +628,7 @@ impl<'a> AuthorizationList<'a> {
         let mut ids = AttestationIds::default();
         let mut rot: Option<Vec<u8>> = None;
         let mut attest_app_id: Option<Cow<'a, [u8]>> = None;
-        let mut additional_attestation_info = Vec::new();
+        let mut module_hash: Option<Cow<'a, [u8]>> = None;
 
         // Divide key parameters into key characteristics and key generation parameters.
         for param in key_params {
@@ -643,9 +644,7 @@ impl<'a> AuthorizationList<'a> {
                 KeyParam::AttestationIdMeid(v) => ids.meid = Some(v.into()),
                 KeyParam::AttestationIdManufacturer(v) => ids.manufacturer = Some(v.into()),
                 KeyParam::AttestationIdModel(v) => ids.model = Some(v.into()),
-                KeyParam::ModuleHash(_) => {
-                    additional_attestation_info.try_push(param).map_err(der_alloc_err)?
-                }
+                KeyParam::ModuleHash(hash) => module_hash = Some(hash.into()),
                 _ => auths.try_push(param).map_err(der_alloc_err)?,
             }
         }
@@ -655,7 +654,7 @@ impl<'a> AuthorizationList<'a> {
             ids,
             rot_info: rot,
             app_id: attest_app_id,
-            additional_attestation_info: additional_attestation_info.into(),
+            module_hash,
         })
     }
 }
@@ -680,7 +679,7 @@ impl<'a> der::DecodeValue<'a> for AuthorizationList<'a> {
                 ids: AttestationIds::default(),
                 rot_info: None,
                 app_id: None,
-                additional_attestation_info: Vec::new().into(),
+                module_hash: None,
             });
         }
         if decoder.remaining_len() < header.length {
@@ -1074,18 +1073,6 @@ macro_rules! asn1_null {
         }
     }
 }
-macro_rules! asn1_octet_string {
-    { $params:expr, $variant:ident } => {
-        if let Some(val) = get_opt_tag_value!($params.as_ref(), $variant).map_err(|_e| {
-            log::warn!("failed to get {} value for ext", stringify!($variant));
-            der::Error::new(der::ErrorKind::Failed, der::Length::ZERO)
-        })? {
-            Some(ExplicitTaggedValue::new(Tag::$variant, OctetStringRef::new(val)?))
-        } else {
-            None
-        }
-    }
-}
 
 fn asn1_octet_string(
     tag: Tag,
@@ -1188,7 +1175,7 @@ impl EncodeValue for AuthorizationList<'_> {
                 Tag::AttestationIdSecondImei,
                 self.ids.imei2.as_deref(),
             )?)?
-            + asn1_len(asn1_octet_string!(&self.additional_attestation_info, ModuleHash))?;
+            + asn1_len(asn1_octet_string(Tag::ModuleHash, self.module_hash.as_deref())?)?;
         length
     }
 
@@ -1262,7 +1249,7 @@ impl EncodeValue for AuthorizationList<'_> {
             asn1_octet_string(Tag::AttestationIdSecondImei, self.ids.imei2.as_deref())?,
             writer,
         )?;
-        asn1_val(asn1_octet_string!(&self.additional_attestation_info, ModuleHash), writer)?;
+        asn1_val(asn1_octet_string(Tag::ModuleHash, self.module_hash.as_deref())?, writer)?;
         Ok(())
     }
 }
