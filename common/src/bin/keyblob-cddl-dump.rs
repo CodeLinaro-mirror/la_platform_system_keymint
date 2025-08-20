@@ -127,6 +127,7 @@ fn main() {
     schema.add(keymint::KeyOrigin::Generated);
     schema.add(keymint::KeyPurpose::Sign);
     schema.add(keymint::HardwareAuthenticatorType::Fingerprint);
+    schema.add(keymint::MlDsaVariant::MlDsa65);
     schema.add(keymint::PaddingMode::None);
 
     schema.add(keymint::DateTime { ms_since_epoch: 22_593_600_000 });
