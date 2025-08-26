@@ -27,7 +27,7 @@ use alloc::{
 use core::convert::{From, TryInto};
 use enumn::N;
 use kmr_derive::AsCborValue;
-use kmr_wire::keymint::{Algorithm, Digest, EcCurve};
+use kmr_wire::keymint::{Algorithm, Digest, EcCurve, MlDsaVariant};
 use kmr_wire::{cbor, cbor_type_error, AsCborValue, CborError, KeySizeInBits, RsaExponent};
 use log::error;
 use spki::SubjectPublicKeyInfoRef;
@@ -37,6 +37,7 @@ pub mod aes;
 pub mod des;
 pub mod ec;
 pub mod hmac;
+pub mod mldsa;
 pub mod rsa;
 mod traits;
 pub use traits::*;
@@ -81,6 +82,8 @@ pub enum KeyGenInfo {
     Ed25519,
     /// Generate an X25519 keypair.
     X25519,
+    /// Generate an ML-DSA keypair.
+    MlDsa(MlDsaVariant),
 }
 
 /// Type of elliptic curve.
@@ -130,6 +133,7 @@ opaque_from_key!(des::Key);
 opaque_from_key!(hmac::Key);
 opaque_from_key!(rsa::Key);
 opaque_from_key!(ec::Key);
+opaque_from_key!(mldsa::Key);
 
 impl<T> From<OpaqueKeyMaterial> for OpaqueOr<T> {
     fn from(k: OpaqueKeyMaterial) -> Self {
@@ -151,6 +155,8 @@ pub enum KeyMaterial {
     Rsa(OpaqueOr<rsa::Key>),
     /// Elliptic curve asymmetric key.
     Ec(EcCurve, CurveType, OpaqueOr<ec::Key>),
+    /// ML-DSA asymmetric key.
+    MlDsa(MlDsaVariant, OpaqueOr<mldsa::Key>),
 }
 
 /// Macro that extracts the explicit key from an [`OpaqueOr`] wrapper.
@@ -170,7 +176,7 @@ impl KeyMaterial {
     pub fn is_asymmetric(&self) -> bool {
         match self {
             Self::Aes(_) | Self::TripleDes(_) | Self::Hmac(_) => false,
-            Self::Ec(_, _, _) | Self::Rsa(_) => true,
+            Self::Ec(_, _, _) | Self::Rsa(_) | Self::MlDsa(_, _) => true,
         }
     }
 
@@ -198,12 +204,14 @@ impl KeyMaterial {
         buf: &'a mut Vec<u8>,
         ec: &dyn Ec,
         rsa: &dyn Rsa,
+        mldsa: &dyn MlDsa,
     ) -> Result<Option<SubjectPublicKeyInfoRef<'a>>, Error> {
         Ok(match self {
             Self::Rsa(key) => Some(key.subject_public_key_info(buf, rsa)?),
             Self::Ec(curve, curve_type, key) => {
                 Some(key.subject_public_key_info(buf, ec, curve, curve_type)?)
             }
+            Self::MlDsa(variant, key) => Some(key.subject_public_key_info(buf, *variant, mldsa)?),
             _ => None,
         })
     }
@@ -223,6 +231,7 @@ impl core::fmt::Debug for KeyMaterial {
             Self::Hmac(_) => f.write_str("Hmac(...)"),
             Self::Rsa(_) => f.write_str("Rsa(...)"),
             Self::Ec(c, _, _) => f.write_fmt(format_args!("Ec({c:?}, ...)")),
+            Self::MlDsa(v, _) => f.write_fmt(format_args!("MlDsa({v:?}, ...)")),
         }
     }
 }
@@ -289,7 +298,7 @@ impl AsCborValue for KeyMaterial {
             x if x == Algorithm::Ec as i32 => {
                 let mut a = match raw_key_value {
                     cbor::value::Value::Array(a) if a.len() == 3 => a,
-                    _ => return cbor_type_error(&raw_key_value, "arr len 2"),
+                    _ => return cbor_type_error(&raw_key_value, "arr len 3"),
                 };
                 let raw_key_value = a.remove(2);
                 let raw_key = <Vec<u8>>::from_cbor_value(raw_key_value)?;
@@ -323,6 +332,28 @@ impl AsCborValue for KeyMaterial {
                         }
                     };
                     Ok(Self::Ec(curve, curve_type, key.into()))
+                }
+            }
+            x if x == Algorithm::MlDsa as i32 => {
+                let mut a = match raw_key_value {
+                    cbor::value::Value::Array(a) if a.len() == 2 => a,
+                    _ => return cbor_type_error(&raw_key_value, "arr len 2"),
+                };
+                let raw_key_value = a.remove(1);
+                let raw_key = <Vec<u8>>::from_cbor_value(raw_key_value)?;
+                let variant = <MlDsaVariant>::from_cbor_value(a.remove(0))?;
+                if opaque {
+                    Ok(Self::MlDsa(variant, OpaqueKeyMaterial(raw_key).into()))
+                } else {
+                    let key = match variant {
+                        MlDsaVariant::MlDsa65 => mldsa::Key::MlDsa65(
+                            raw_key.try_into().map_err(|_e| CborError::InvalidValue)?,
+                        ),
+                        MlDsaVariant::MlDsa87 => mldsa::Key::MlDsa87(
+                            raw_key.try_into().map_err(|_e| CborError::InvalidValue)?,
+                        ),
+                    };
+                    Ok(Self::MlDsa(variant, key.into()))
                 }
             }
             _ => Err(CborError::UnexpectedItem("unknown enum", "algo enum")),
@@ -363,6 +394,18 @@ impl AsCborValue for KeyMaterial {
                     vec_try![
                         cbor::value::Value::Integer((curve as i32).into()),
                         cbor::value::Value::Integer((curve_type as i32).into()),
+                        cbor::value::Value::Bytes(try_to_vec(&k)?),
+                    ]
+                    .map_err(cbor_alloc_err)?
+                ),
+            ]
+            .map_err(cbor_alloc_err)?,
+            Self::MlDsa(variant, OpaqueOr::Opaque(OpaqueKeyMaterial(k))) => vec_try![
+                cbor::value::Value::Integer((Algorithm::MlDsa as i32).into()),
+                cbor::value::Value::Bool(true),
+                cbor::value::Value::Array(
+                    vec_try![
+                        cbor::value::Value::Integer((variant as i32).into()),
                         cbor::value::Value::Bytes(try_to_vec(&k)?),
                     ]
                     .map_err(cbor_alloc_err)?
@@ -412,6 +455,18 @@ impl AsCborValue for KeyMaterial {
                 ),
             ]
             .map_err(cbor_alloc_err)?,
+            Self::MlDsa(variant, OpaqueOr::Explicit(k)) => vec_try![
+                cbor::value::Value::Integer((Algorithm::MlDsa as i32).into()),
+                cbor::value::Value::Bool(false),
+                cbor::value::Value::Array(
+                    vec_try![
+                        cbor::value::Value::Integer((variant as i32).into()),
+                        cbor::value::Value::Bytes(k.private_key_bytes().to_vec()),
+                    ]
+                    .map_err(cbor_alloc_err)?
+                ),
+            ]
+            .map_err(cbor_alloc_err)?,
         }))
     }
 
@@ -434,6 +489,8 @@ impl AsCborValue for KeyMaterial {
   ; `ECPrivateKey` structure, as specified by RFC 5915 section 3.
   ; An explicit EC key for curve 25519 is the raw key bytes.
   [{}, bool, [EcCurve, CurveType, bstr]], ; {}
+  ; An explicit ML-DSA key is the 32-byte seed value.
+  [{}, bool, [MlDsaVariant, bstr]], ; {}
 )",
             Algorithm::Aes as i32,
             "Algorithm_Aes",
@@ -445,6 +502,8 @@ impl AsCborValue for KeyMaterial {
             "Algorithm_Rsa",
             Algorithm::Ec as i32,
             "Algorithm_Ec",
+            Algorithm::MlDsa as i32,
+            "Algorithm_MlDsa",
         ))
     }
 }
