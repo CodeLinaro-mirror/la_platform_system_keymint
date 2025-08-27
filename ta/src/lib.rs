@@ -1104,6 +1104,9 @@ impl KeyMintTa {
         }
         let mac0 = coset::CoseMac0::from_tagged_slice(root_of_trust)
             .map_err(|_e| km_err!(InvalidArgument, "Failed to CBOR-decode CoseMac0"))?;
+        if mac0.payload.is_none() {
+            return Err(km_err!(InvalidArgument, "No payload in CoseMac0"));
+        }
         mac0.verify_tag(&self.rot_challenge, |tag, data| {
             match self.verify_device_hmac(data, tag) {
                 Ok(true) => Ok(()),
