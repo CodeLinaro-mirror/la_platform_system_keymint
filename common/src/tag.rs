@@ -1410,6 +1410,7 @@ pub fn increment_imei(imei: &[u8]) -> Vec<u8> {
             return Vec::new();
         }
     };
+    // Expect that the 15 or 16 digits of the IMEI parse within a `u64`.
     let imei: u64 = match imei.parse() {
         Ok(v) => v,
         Err(_) => {
@@ -1420,7 +1421,14 @@ pub fn increment_imei(imei: &[u8]) -> Vec<u8> {
 
     // Drop trailing checksum digit, increment, and restore checksum.
     let imei2 = (imei / 10) + 1;
-    let imei2 = (imei2 * 10) + luhn_checksum(imei2);
+    let imei2_without_checksum = match imei2.checked_mul(10) {
+        Some(v) => v,
+        None => {
+            warn!("IMEI overflow");
+            return Vec::new();
+        }
+    };
+    let imei2 = imei2_without_checksum + luhn_checksum(imei2);
 
     // Convert back to bytes.
     alloc::format!("{imei2}").into_bytes()
