@@ -101,6 +101,16 @@ pub trait RetrieveKeyMaterial {
     fn timestamp_token_mac_input(&self, token: &TimeStampToken) -> Result<Vec<u8>, Error> {
         crate::clock::timestamp_token_mac_input(token)
     }
+
+    /// Checks if a KEK context is outdated.
+    ///
+    /// This method inspects the provided `kek_context` to determine if the security
+    /// material it represents (e.g., a DICE policy) is older than the device's current
+    /// security state. If so, this method should return `true`, signaling that the key
+    /// needs to be re-wrapped with a new Key Encryption Key (KEK).
+    fn kek_context_is_outdated(&self, _kek_context: &[u8]) -> Result<bool, Error> {
+        Ok(false)
+    }
 }
 
 /// Device HMAC calculation.
