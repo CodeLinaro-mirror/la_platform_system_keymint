@@ -414,6 +414,8 @@ pub(crate) fn attestation_extension<'a>(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorizationList<'a> {
     pub auths: Cow<'a, [KeyParam]>,
+    /// Whether to include `UserSecureId` value if found in `auths` when encoding.
+    pub encode_sid: bool,
     pub keygen_params: Cow<'a, [KeyParam]>,
     pub rot_info: Option<KeyParam>,
     pub app_id: Option<KeyParam>,
@@ -512,7 +514,8 @@ macro_rules! check_attestation_id_either {
 
 impl<'a> AuthorizationList<'a> {
     /// Build an `AuthorizationList` ready for serialization. This constructor will fail if device
-    /// ID attestation is required but the relevant IDs are missing or mismatched.
+    /// ID attestation is required but the relevant IDs are missing or mismatched.  Any
+    /// `UserSecureId` values included in `auths` will be ignored on encoding.
     fn new(
         auths: &'a [KeyParam],
         keygen_params: &'a [KeyParam],
@@ -562,6 +565,7 @@ impl<'a> AuthorizationList<'a> {
         };
         Ok(Self {
             auths: auths.into(),
+            encode_sid: false,
             keygen_params: keygen_params.into(),
             rot_info: encoded_rot.map(KeyParam::RootOfTrust),
             app_id: match app_id {
@@ -573,13 +577,18 @@ impl<'a> AuthorizationList<'a> {
     }
 
     /// Build an `AuthorizationList` using a set of key parameters.
+    ///
     /// The checks for the attestation ids are not run here in contrast to `AuthorizationList::new`
     /// because this method is used to construct an `AuthorizationList` in the decode path rather
-    /// than in the encode path. Note: decode path is currently used only by
-    /// `KeyMintTa::import_wrapped_key` functionality, which only uses `auth` field of
-    /// `AuthorizationList`. Decoding for the whole `AuthorizationList` is added here for the
-    /// completeness and anticipating a future use case of decoding the attestation extension from
-    /// an X.509 certificate.
+    /// than in the encode path.
+    ///
+    /// Any (single) `UserSecureId` value in `key_params` will be included when the
+    /// `AuthorizationList` is DER-encoded.
+    ///
+    /// Note: decode path is currently used only by `KeyMintTa::import_wrapped_key` functionality,
+    /// which only uses `auth` field of `AuthorizationList`. Decoding for the whole
+    /// `AuthorizationList` is added here for the completeness and anticipating a future use case of
+    /// decoding the attestation extension from an X.509 certificate.
     fn new_from_key_params(key_params: Vec<KeyParam>) -> Result<Self, der::Error> {
         let mut auths = Vec::new();
         let mut keygen_params = Vec::new();
@@ -611,6 +620,7 @@ impl<'a> AuthorizationList<'a> {
         }
         Ok(AuthorizationList {
             auths: auths.into(),
+            encode_sid: true,
             keygen_params: keygen_params.into(),
             rot_info: rot,
             app_id: attest_app_id,
@@ -635,6 +645,7 @@ impl<'a> der::DecodeValue<'a> for AuthorizationList<'a> {
         if header.length.is_zero() {
             return Ok(AuthorizationList {
                 auths: Vec::new().into(),
+                encode_sid: true,
                 keygen_params: Vec::new().into(),
                 rot_info: None,
                 app_id: None,
@@ -1093,6 +1104,11 @@ impl EncodeValue for AuthorizationList<'_> {
             + asn1_len(asn1_integer_datetime!(self.auths, OriginationExpireDatetime))?
             + asn1_len(asn1_integer_datetime!(self.auths, UsageExpireDatetime))?
             + asn1_len(asn1_integer!(self.auths, UsageCountLimit))?
+            + if self.encode_sid {
+                asn1_len(asn1_integer!(self.auths, UserSecureId))?
+            } else {
+                Length::ZERO
+            }
             + asn1_len(asn1_null!(self.auths, NoAuthRequired))?
             + asn1_len(asn1_integer!(self.auths, UserAuthType))?
             + asn1_len(asn1_integer!(self.auths, AuthTimeout))?
@@ -1156,8 +1172,11 @@ impl EncodeValue for AuthorizationList<'_> {
         asn1_val(asn1_integer_datetime!(self.auths, OriginationExpireDatetime), writer)?;
         asn1_val(asn1_integer_datetime!(self.auths, UsageExpireDatetime), writer)?;
         asn1_val(asn1_integer!(self.auths, UsageCountLimit), writer)?;
-        // Skip `UserSecureId` as it's only included in the extension for
+        // Note that `UserSecureId` is only included in the extension for
         // importWrappedKey() cases.
+        if self.encode_sid {
+            asn1_val(asn1_integer!(self.auths, UserSecureId), writer)?;
+        }
         asn1_val(asn1_null!(self.auths, NoAuthRequired), writer)?;
         asn1_val(asn1_integer!(self.auths, UserAuthType), writer)?;
         asn1_val(asn1_integer!(self.auths, AuthTimeout), writer)?;
@@ -1389,7 +1408,10 @@ mod tests {
             "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
         );
         assert_eq!(hex::encode(&got), want);
-        assert_eq!(AttestationExtension::from_der(&got).unwrap(), ext);
+        let mut parsed = AttestationExtension::from_der(&got).unwrap();
+        parsed.sw_enforced.encode_sid = false;
+        parsed.hw_enforced.encode_sid = false;
+        assert_eq!(parsed, ext);
     }
 
     #[test]
@@ -1465,7 +1487,9 @@ mod tests {
         // encode
         assert_eq!(hex::encode(&got), want);
         // decode from encoded
-        assert_eq!(AuthorizationList::from_der(got.as_slice()).unwrap(), authorization_list);
+        let mut parsed = AuthorizationList::from_der(got.as_slice()).unwrap();
+        parsed.encode_sid = false;
+        assert_eq!(parsed, authorization_list);
     }
 
     #[test]
@@ -1542,7 +1566,8 @@ mod tests {
             "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
         ))
         .unwrap();
-        let got = AuthorizationList::from_der(&input).unwrap();
+        let mut got = AuthorizationList::from_der(&input).unwrap();
+        got.encode_sid = false;
 
         let want = AuthorizationList::new(
             &[KeyParam::Algorithm(keymint::Algorithm::Ec), KeyParam::UserSecureId(2)],
