@@ -305,6 +305,12 @@ pub struct HalInfo {
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct KeyId([u8; 32]);
 
+struct KeyBlobDecryptionResult {
+    keyblob: keyblob::PlaintextKeyBlob,
+    slot: Option<SecureDeletionSlot>,
+    kek_context_is_outdated: bool,
+}
+
 impl KeyMintTa {
     /// Create a new [`KeyMintTa`] instance.
     pub fn new(
@@ -393,7 +399,7 @@ impl KeyMintTa {
         &self,
         key_blob: &[u8],
         params: &[KeyParam],
-    ) -> Result<(keyblob::PlaintextKeyBlob, Option<SecureDeletionSlot>), Error> {
+    ) -> Result<KeyBlobDecryptionResult, Error> {
         let encrypted_keyblob = match keyblob::EncryptedKeyBlob::new(key_blob) {
             Ok(k) => k,
             Err(e) => {
@@ -409,8 +415,10 @@ impl KeyMintTa {
                 return Err(e);
             }
         };
+        let kek_context_is_outdated =
+            self.dev.keys.kek_context_is_outdated(encrypted_keyblob.kek_context())?;
         let hidden = tag::hidden(params, self.root_of_trust()?)?;
-        let sdd_slot = encrypted_keyblob.secure_deletion_slot();
+        let slot = encrypted_keyblob.secure_deletion_slot();
         let root_kek = self.root_kek(encrypted_keyblob.kek_context())?;
         let keyblob = keyblob::decrypt(
             match &self.dev.sdd_mgr {
@@ -423,7 +431,7 @@ impl KeyMintTa {
             encrypted_keyblob,
             hidden,
         )?;
-        Ok((keyblob, sdd_slot))
+        Ok(KeyBlobDecryptionResult { keyblob, slot, kek_context_is_outdated })
     }
 
     /// Parse and decrypt an encrypted key blob, detecting keys that require upgrade.
@@ -432,7 +440,11 @@ impl KeyMintTa {
         key_blob: &[u8],
         params: &[KeyParam],
     ) -> Result<(keyblob::PlaintextKeyBlob, Option<SecureDeletionSlot>), Error> {
-        let (keyblob, slot) = self.keyblob_parse_decrypt_backlevel(key_blob, params)?;
+        let KeyBlobDecryptionResult { keyblob, slot, kek_context_is_outdated } =
+            self.keyblob_parse_decrypt_backlevel(key_blob, params)?;
+        if kek_context_is_outdated {
+            return Err(km_err!(KeyRequiresUpgrade, "KEK context outdated, request upgrade"));
+        }
 
         // Check all of the patchlevels and versions to see if key upgrade is required.
         fn check(v: &u32, curr: u32, name: &str) -> Result<(), Error> {
