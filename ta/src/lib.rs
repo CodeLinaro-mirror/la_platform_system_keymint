@@ -305,6 +305,12 @@ pub struct HalInfo {
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct KeyId([u8; 32]);
 
+struct KeyBlobDecryptionResult {
+    keyblob: keyblob::PlaintextKeyBlob,
+    slot: Option<SecureDeletionSlot>,
+    kek_context_is_outdated: bool,
+}
+
 impl KeyMintTa {
     /// Create a new [`KeyMintTa`] instance.
     pub fn new(
@@ -393,7 +399,7 @@ impl KeyMintTa {
         &self,
         key_blob: &[u8],
         params: &[KeyParam],
-    ) -> Result<(keyblob::PlaintextKeyBlob, Option<SecureDeletionSlot>), Error> {
+    ) -> Result<KeyBlobDecryptionResult, Error> {
         let encrypted_keyblob = match keyblob::EncryptedKeyBlob::new(key_blob) {
             Ok(k) => k,
             Err(e) => {
@@ -409,8 +415,10 @@ impl KeyMintTa {
                 return Err(e);
             }
         };
+        let kek_context_is_outdated =
+            self.dev.keys.kek_context_is_outdated(encrypted_keyblob.kek_context())?;
         let hidden = tag::hidden(params, self.root_of_trust()?)?;
-        let sdd_slot = encrypted_keyblob.secure_deletion_slot();
+        let slot = encrypted_keyblob.secure_deletion_slot();
         let root_kek = self.root_kek(encrypted_keyblob.kek_context())?;
         let keyblob = keyblob::decrypt(
             match &self.dev.sdd_mgr {
@@ -423,7 +431,7 @@ impl KeyMintTa {
             encrypted_keyblob,
             hidden,
         )?;
-        Ok((keyblob, sdd_slot))
+        Ok(KeyBlobDecryptionResult { keyblob, slot, kek_context_is_outdated })
     }
 
     /// Parse and decrypt an encrypted key blob, detecting keys that require upgrade.
@@ -432,7 +440,11 @@ impl KeyMintTa {
         key_blob: &[u8],
         params: &[KeyParam],
     ) -> Result<(keyblob::PlaintextKeyBlob, Option<SecureDeletionSlot>), Error> {
-        let (keyblob, slot) = self.keyblob_parse_decrypt_backlevel(key_blob, params)?;
+        let KeyBlobDecryptionResult { keyblob, slot, kek_context_is_outdated } =
+            self.keyblob_parse_decrypt_backlevel(key_blob, params)?;
+        if kek_context_is_outdated {
+            return Err(km_err!(KeyRequiresUpgrade, "KEK context outdated, request upgrade"));
+        }
 
         // Check all of the patchlevels and versions to see if key upgrade is required.
         fn check(v: &u32, curr: u32, name: &str) -> Result<(), Error> {
@@ -851,13 +863,25 @@ impl KeyMintTa {
                 Ok(_ret) => op_ok_rsp(PerformOpRsp::DeviceDeleteAllKeys(DeleteAllKeysResponse {})),
                 Err(e) => op_error_rsp(DeleteAllKeysRequest::CODE, e),
             },
-            PerformOpReq::DeviceDestroyAttestationIds(_req) => match self.destroy_attestation_ids()
-            {
-                Ok(_ret) => op_ok_rsp(PerformOpRsp::DeviceDestroyAttestationIds(
-                    DestroyAttestationIdsResponse {},
-                )),
-                Err(e) => op_error_rsp(DestroyAttestationIdsRequest::CODE, e),
-            },
+            PerformOpReq::DeviceDestroyAttestationIds(_req) => {
+                let aidl_version = self.aidl_version as i32;
+                if aidl_version >= 500 {
+                    let error: Error = ErrorKind::Hal(
+                        ErrorCode::Unimplemented,
+                        format!(
+                            "AIDL version ({aidl_version:?}) >= 500 doesn't support destroying attestation IDs",
+                        ),
+                    )
+                    .into();
+                    return op_error_rsp(DestroyAttestationIdsRequest::CODE, error);
+                }
+                match self.destroy_attestation_ids() {
+                    Ok(_ret) => op_ok_rsp(PerformOpRsp::DeviceDestroyAttestationIds(
+                        DestroyAttestationIdsResponse {},
+                    )),
+                    Err(e) => op_error_rsp(DestroyAttestationIdsRequest::CODE, e),
+                }
+            }
             PerformOpReq::DeviceBegin(req) => {
                 match self.begin_operation(req.purpose, &req.key_blob, req.params, req.auth_token) {
                     Ok(ret) => op_ok_rsp(PerformOpRsp::DeviceBegin(BeginResponse { ret })),
@@ -1107,18 +1131,17 @@ impl KeyMintTa {
         }
         let mac0 = coset::CoseMac0::from_tagged_slice(root_of_trust)
             .map_err(|_e| km_err!(InvalidArgument, "Failed to CBOR-decode CoseMac0"))?;
-        if mac0.payload.is_none() {
-            return Err(km_err!(InvalidArgument, "No payload in CoseMac0"));
-        }
-        mac0.verify_tag(&self.rot_challenge, |tag, data| {
-            match self.verify_device_hmac(data, tag) {
+        mac0.verify_payload_tag(
+            &self.rot_challenge,
+            || km_err!(InvalidArgument, "No payload in CoseMac0"),
+            |tag, data| match self.verify_device_hmac(data, tag) {
                 Ok(true) => Ok(()),
                 Ok(false) => {
                     Err(km_err!(VerificationFailed, "HMAC verification of RootOfTrust failed"))
                 }
                 Err(e) => Err(e),
-            }
-        })?;
+            },
+        )?;
         let payload =
             mac0.payload.ok_or_else(|| km_err!(InvalidArgument, "Missing payload in CoseMac0"))?;
         let boot_info = keymint::BootInfo::from_tagged_slice(&payload)
