@@ -46,7 +46,7 @@ fn extract_u32(value: Option<regex::Match>) -> Result<u32, Error> {
 
 /// Retrieve the value of a property identified by `name`.
 pub fn get_property(name: &str) -> Result<String, Error> {
-    match rustutils::system_properties::read(name) {
+    match rustutils::android::system_properties::read(name) {
         Ok(Some(value)) => Ok(value),
         Ok(None) => Err(format!("no value for property {name}")),
         Err(e) => Err(format!("failed to get property {name}: {e:?}")),
