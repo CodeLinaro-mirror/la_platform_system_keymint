@@ -112,7 +112,7 @@ impl crate::KeyMintTa {
     pub(crate) fn get_signing_info(
         &self,
         key_type: device::SigningKeyType,
-    ) -> Result<SigningInfo, Error> {
+    ) -> Result<SigningInfo<'_>, Error> {
         let sign_info = self.dev.sign_info.as_ref().ok_or_else(|| {
             km_err!(AttestationKeysNotProvisioned, "batch attestation keys not available")
         })?;
