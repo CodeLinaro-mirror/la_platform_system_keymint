@@ -33,6 +33,7 @@ use kmr_common::{
 };
 use kmr_wire::{
     coset::TaggedCborSerializable,
+    frp::ErrorCode as FrpErrorCode,
     keymint::{
         Digest, ErrorCode, HardwareAuthToken, KeyCharacteristics, KeyMintHardwareInfo, KeyOrigin,
         KeyParam, SecurityLevel, Tag, VerifiedBootState, NEXT_MESSAGE_SIGNAL_FALSE,
@@ -48,6 +49,7 @@ use log::{debug, error, info, trace, warn};
 mod cert;
 mod clock;
 pub mod device;
+mod frp;
 pub mod keys;
 mod operation;
 pub mod rkp;
@@ -61,7 +63,7 @@ mod tests;
 
 /// Possible KeyMint HAL versions
 #[repr(i32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]
 pub enum KeyMintHalVersion {
     /// V5 removes support for destroying attestation IDs.
     V5 = 500,
@@ -180,6 +182,9 @@ pub struct KeyMintTa {
 
     /// Operation handle of the (single) in-flight operation that requires trusted user presence.
     presence_required_op: Option<OpHandle>,
+
+    /// True iff FRP is active.
+    frp_active: bool,
 }
 
 /// A helper method that can be used by the TA for processing the responses to be sent to the
@@ -324,6 +329,12 @@ impl KeyMintTa {
         } else {
             MAX_TEE_OPERATIONS
         };
+
+        // FRP is only supported from V5, and only if the FRP secret storage is implemented.
+        let frp_active =
+            KEYMINT_CURRENT_VERSION >= KeyMintHalVersion::V5 && dev.frp_secret_storage.is_some();
+        info!("FRP is enabled: {}", frp_active);
+
         Self {
             imp,
             dev,
@@ -345,6 +356,7 @@ impl KeyMintTa {
             attestation_id_info: RefCell::new(None),
             dice_info: RefCell::new(None),
             additional_attestation_info: Vec::new(),
+            frp_active,
         }
     }
 
@@ -590,6 +602,18 @@ impl KeyMintTa {
             }
         } else {
             info!("Setting boot_info to {boot_info:?}");
+
+            #[cfg(feature = "disable_frp_if_bootloader_unlocked")]
+            if let Some(frp_secret_storage) = &mut self.dev.frp_secret_storage {
+                // If the bootloader is unlocked, default the FRP secret.
+                if !boot_info.device_boot_locked {
+                    info!("Bootloader is unlocked, clearing FRP secret.");
+                    if let Err(e) = frp_secret_storage.store_secret([0; 32]) {
+                        error!("Failed to clear FRP secret: {:?}", e);
+                    }
+                }
+            }
+
             let rot_info = RootOfTrustInfo {
                 verified_boot_key: boot_info.verified_boot_key.clone(),
                 device_boot_locked: boot_info.device_boot_locked,
@@ -1015,6 +1039,49 @@ impl KeyMintTa {
                     Err(e) => op_error_rsp(GenerateCertificateRequestV2Request::CODE, e),
                 }
             }
+            PerformOpReq::FrpIsActive(_req) => {
+                op_ok_rsp(PerformOpRsp::FrpIsActive(FrpIsActiveResponse {
+                    is_active: self.frp_active(),
+                }))
+            }
+            PerformOpReq::FrpActivate(_req) => match self.activate_frp() {
+                Ok(()) => op_ok_rsp(PerformOpRsp::FrpActivate(FrpActivateResponse {})),
+                Err(e) => op_error_rsp(FrpActivateRequest::CODE, e),
+            },
+            PerformOpReq::FrpDeactivate(req) => match self.deactivate_frp(req.candidate_secret) {
+                Ok(result) => {
+                    op_ok_rsp(PerformOpRsp::FrpDeactivate(FrpDeactivateResponse { result }))
+                }
+                Err(e) => op_error_rsp(FrpDeactivateRequest::CODE, e),
+            },
+            PerformOpReq::FrpSetSecret(req) => match self.set_frp_secret(req.new_secret) {
+                Ok(_ret) => op_ok_rsp(PerformOpRsp::FrpSetSecret(FrpSetSecretResponse {})),
+                Err(e) => op_error_rsp(FrpSetSecretRequest::CODE, e),
+            },
+            PerformOpReq::FrpGetSecret(_req) => match self.get_frp_secret() {
+                Ok(frp_secret) => {
+                    op_ok_rsp(PerformOpRsp::FrpGetSecret(FrpGetSecretResponse { frp_secret }))
+                }
+                Err(e) => op_error_rsp(FrpGetSecretRequest::CODE, e),
+            },
+            PerformOpReq::FrpStoreData(req) => match self.store_frp_data(&req.key, &req.data) {
+                Ok(_ret) => op_ok_rsp(PerformOpRsp::FrpStoreData(FrpStoreDataResponse {})),
+                Err(e) => op_error_rsp(FrpStoreDataRequest::CODE, e),
+            },
+            PerformOpReq::FrpRetrieveData(req) => match self.retrieve_frp_data(&req.key) {
+                Ok(data) => {
+                    op_ok_rsp(PerformOpRsp::FrpRetrieveData(FrpRetrieveDataResponse { data }))
+                }
+                Err(e) => op_error_rsp(FrpRetrieveDataRequest::CODE, e),
+            },
+            PerformOpReq::FrpDeleteData(req) => match self.delete_frp_data(&req.key) {
+                Ok(_ret) => op_ok_rsp(PerformOpRsp::FrpDeleteData(FrpDeleteDataResponse {})),
+                Err(e) => op_error_rsp(FrpDeleteDataRequest::CODE, e),
+            },
+            PerformOpReq::FrpDeleteAllData(_req) => match self.delete_all_frp_data() {
+                Ok(_ret) => op_ok_rsp(PerformOpRsp::FrpDeleteAllData(FrpDeleteAllDataResponse {})),
+                Err(e) => op_error_rsp(FrpDeleteAllDataRequest::CODE, e),
+            },
         }
     }
 
@@ -1307,23 +1374,37 @@ fn error_rsp(error_code: i32) -> PerformOpResponse {
 fn op_error_rsp(op: KeyMintOperation, err: Error) -> PerformOpResponse {
     warn!("failing {op:?} request with error {err:?}");
     if kmr_wire::is_rpc_operation(op) {
-        // The IRemotelyProvisionedComponent HAL uses a different error space than the
-        // other HALs.
+        // The IRemotelyProvisionedComponent HAL uses its own error space.
         let rpc_err: rpc::ErrorCode = match err.kind() {
             ErrorKind::Cbor(_) | ErrorKind::Der(_) | ErrorKind::Alloc(_) => rpc::ErrorCode::Failed,
-            ErrorKind::Hal(_, _) => {
+            ErrorKind::Hal(_, _) | ErrorKind::Frp(_, _) => {
                 error!("encountered non-RKP error on RKP method! {err:?}");
                 rpc::ErrorCode::Failed
             }
             ErrorKind::Rpc(e, _) => *e,
         };
         error_rsp(rpc_err as i32)
+    } else if kmr_wire::is_frp_operation(op) {
+        // The IFactoryResetProtection HAL uses its own error space.
+        let frp_err: FrpErrorCode = match err.kind() {
+            ErrorKind::Cbor(_) | ErrorKind::Der(_) | ErrorKind::Alloc(_) => FrpErrorCode::Failed,
+            ErrorKind::Hal(_, _) | ErrorKind::Rpc(_, _) => {
+                error!("encountered non-FRP error on FRP method! {err:?}");
+                FrpErrorCode::Failed
+            }
+            ErrorKind::Frp(e, _) => *e,
+        };
+        error_rsp(frp_err as i32)
     } else {
         let hal_err = match err.kind() {
             ErrorKind::Cbor(_) | ErrorKind::Der(_) => ErrorCode::InvalidArgument,
             ErrorKind::Hal(e, _) => *e,
             ErrorKind::Rpc(_, _) => {
                 error!("encountered RKP error on non-RKP method! {err:?}");
+                ErrorCode::InvalidArgument
+            }
+            ErrorKind::Frp(_, _) => {
+                error!("encountered FRP error on non-FRP method! {err:?}");
                 ErrorCode::InvalidArgument
             }
             ErrorKind::Alloc(_) => ErrorCode::MemoryAllocationFailed,

@@ -24,7 +24,7 @@ use alloc::{
 use core::convert::From;
 use core::num::TryFromIntError;
 use der::ErrorKind as DerErrorKind;
-use kmr_wire::{cbor, keymint::ErrorCode, rpc, CborError};
+use kmr_wire::{cbor, frp, keymint::ErrorCode, rpc, CborError};
 
 pub use kmr_wire as wire;
 
@@ -64,6 +64,8 @@ pub enum ErrorKind {
     /// This holds a string literal rather than an allocated `String` to avoid allocating in an
     /// allocation error path.
     Alloc(&'static str),
+    /// Error as reported on the `IFactoryResetProtection` HAL, which uses its own error codes.
+    Frp(frp::ErrorCode, String),
 }
 
 /// The error type for a KeyMint operation with an [`ErrorKind`] and diagnostic information.
@@ -150,6 +152,18 @@ macro_rules! rpc_err {
     { $error_code:ident, $($arg:tt)+ } => {
         $crate::km_err_new!($crate::ErrorKind::Rpc(
             kmr_wire::rpc::ErrorCode::$error_code,
+            alloc::format!($($arg)+),
+        ))
+    }
+}
+
+/// Macro to build an [`ErrorKind::Frp`] instance for a specific [`frp::ErrorCode`] value known at
+/// compile time: `frp_err!(Failed, "some {} format", arg)`.
+#[macro_export]
+macro_rules! frp_err {
+    { $error_code:ident, $($arg:tt)+ } => {
+        $crate::km_err_new!($crate::ErrorKind::Frp(
+            kmr_wire::frp::ErrorCode::$error_code,
             alloc::format!($($arg)+),
         ))
     }

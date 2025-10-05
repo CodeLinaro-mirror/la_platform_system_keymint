@@ -55,6 +55,9 @@ rust_library {
         "keymint_use_latest_hal_aidl_rust",
         "kmr_hal_defaults",
     ],
+    rustlibs: [
+        "android.hardware.security.factory_reset_protection-V1-rust",
+    ],
 }
 
 rust_library {
@@ -136,6 +139,7 @@ rust_test {
         "kmr_hal_defaults",
     ],
     rustlibs: [
+        "android.hardware.security.factory_reset_protection-V1-rust",
         "libkmr_wire",
     ],
     test_suites: ["general-tests"],
