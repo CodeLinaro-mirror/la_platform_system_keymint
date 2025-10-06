@@ -9,10 +9,15 @@ edition = "2021"
 license = "Apache-2.0"
 
 [features]
-default = []
+default = ["disable_frp_if_bootloader_unlocked"]
 # The `downgrade` feature allows the HAL service to tell the TA what version of the KeyMint
 # HAL to implement.
 downgrade = []
+# This feature configures the TA to disable FRP if the Android bootloader reports to KeyMint that
+# it is unlocked.
+disable_frp_if_bootloader_unlocked = []
+# This feature configures the TA to disable KeyMint attestations when FRP is active.
+disable_attestation_when_frp_active = []
 
 [dependencies]
 ciborium = { version = "^0.2.0", default-features = false }

@@ -43,6 +43,8 @@ use thiserror::Error;
 pub use binder;
 
 pub mod env;
+#[cfg(feature = "hal_v5")]
+pub mod frp;
 pub mod hal;
 pub mod keymint;
 pub mod rpc;
@@ -62,6 +64,9 @@ pub enum Hal {
     SecureClock,
     /// ISharedSecret HAL.
     SharedSecret,
+    #[cfg(feature = "hal_v5")]
+    /// IFactoryResetProtection HAL.
+    FactoryResetProtection,
 }
 
 impl fmt::Display for Hal {
@@ -74,6 +79,10 @@ impl fmt::Display for Hal {
             }
             Self::SecureClock => "android.hardware.security.secureclock.ISecureClock",
             Self::SharedSecret => "android.hardware.security.sharedsecret.ISharedSecret",
+            #[cfg(feature = "hal_v5")]
+            Self::FactoryResetProtection => {
+                "android.hardware.security.factory_reset_protection.IFactoryResetProtection"
+            }
         })
     }
 }
@@ -90,13 +99,21 @@ impl Hal {
             }
             Hal::SecureClock => secureclock::Device::new_as_binder(channel.clone()).as_binder(),
             Hal::SharedSecret => sharedsecret::Device::new_as_binder(channel.clone()).as_binder(),
+            #[cfg(feature = "hal_v5")]
+            Hal::FactoryResetProtection => frp::Device::new_as_binder(channel.clone()).as_binder(),
         }
     }
 }
 
 /// A list of all HAL services that are registered by default.
-pub const ALL_HALS: &[Hal] =
-    &[Hal::KeyMintDevice, Hal::RemotelyProvisionedComponent, Hal::SecureClock, Hal::SharedSecret];
+pub const ALL_HALS: &[Hal] = &[
+    Hal::KeyMintDevice,
+    Hal::RemotelyProvisionedComponent,
+    Hal::SecureClock,
+    Hal::SharedSecret,
+    #[cfg(feature = "hal_v5")]
+    Hal::FactoryResetProtection,
+];
 
 /// Emit a failure for a failed CBOR conversion.
 #[inline]
@@ -387,9 +404,32 @@ pub fn register_binder_services<T: SerializedChannel + 'static>(
 ) -> Result<(), HalServiceError> {
     for hal in hals_to_register {
         let service_name = format!("{hal}/{instance}");
+
+        // Since FRP is a new unfrozen HAL, we should only register it if it's declared.
+        // It will not be declared if `RELEASE_AIDL_USE_UNFROZEN` is false. See
+        // https://source.android.com/docs/core/architecture/aidl/stable-aidl#new-vintf-interfaces.
+        // TODO(b/447887816): Remove the check for declaration once the interface is frozen.
+        if is_frp_hal(*hal)
+            && !binder::is_declared(&service_name)
+                .map_err(|e| format!("Failed to check if {service_name} is declared: {e:?}"))?
+        {
+            info!("Failed to register {service_name}. Not declared.");
+            continue;
+        }
+
         binder::add_service(&service_name, hal.new_binder(channel))
             .map_err(|e| format!("Failed to register service {service_name}: {e:?}"))?;
         info!("Successfully registered {service_name}");
     }
     Ok(())
+}
+
+#[cfg(not(feature = "hal_v5"))]
+fn is_frp_hal(_hal: Hal) -> bool {
+    false
+}
+
+#[cfg(feature = "hal_v5")]
+fn is_frp_hal(hal: Hal) -> bool {
+    matches!(hal, Hal::FactoryResetProtection)
 }

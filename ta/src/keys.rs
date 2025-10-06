@@ -386,6 +386,16 @@ impl crate::KeyMintTa {
             // - whether to include an attestation extension
             let attest_challenge = get_opt_tag_value!(params, AttestationChallenge)?;
 
+            #[cfg(feature = "disable_attestation_when_frp_active")]
+            if attest_challenge.is_some() && self.frp_active() {
+                error!("Disallowing attestation request because FRP is active.");
+                return Err(km_err!(
+                    // TODO: Create and use ErrorCode::ATTESTATION_DISABLED_BY FRP.  b/443942288.
+                    InvalidOperation,
+                    "Attestation not allowed while FRP is active"
+                ));
+            }
+
             let signing_info = if let Some(attest_challenge) = attest_challenge {
                 // Attestation requested.
                 if attest_challenge.len() > MAX_ATTESTATION_CHALLENGE_LEN {
