@@ -246,8 +246,7 @@ impl crate::KeyMintTa {
                     _ => {
                         return Err(km_err!(
                             IncompatiblePurpose,
-                            "invalid purpose {:?} for AES key",
-                            purpose
+                            "invalid purpose {purpose:?} for AES key",
                         ))
                     }
                 };
@@ -304,8 +303,7 @@ impl crate::KeyMintTa {
                     _ => {
                         return Err(km_err!(
                             IncompatiblePurpose,
-                            "invalid purpose {:?} for DES key",
-                            purpose
+                            "invalid purpose {purpose:?} for DES key",
                         ))
                     }
                 };
@@ -364,8 +362,7 @@ impl crate::KeyMintTa {
                         _ => {
                             return Err(km_err!(
                                 IncompatiblePurpose,
-                                "invalid purpose {:?} for HMAC key",
-                                purpose
+                                "invalid purpose {purpose:?} for HMAC key",
                             ))
                         }
                     },
@@ -390,8 +387,7 @@ impl crate::KeyMintTa {
                     _ => {
                         return Err(km_err!(
                             IncompatiblePurpose,
-                            "invalid purpose {:?} for RSA key",
-                            purpose
+                            "invalid purpose {purpose:?} for RSA key",
                         ))
                     }
                 },
@@ -412,8 +408,7 @@ impl crate::KeyMintTa {
                     _ => {
                         return Err(km_err!(
                             IncompatiblePurpose,
-                            "invalid purpose {:?} for EC key",
-                            purpose
+                            "invalid purpose {purpose:?} for EC key",
                         ))
                     }
                 },
@@ -575,9 +570,8 @@ impl crate::KeyMintTa {
                 if !tag_len_range.contains(&sig.len()) {
                     return Err(km_err!(
                         InvalidArgument,
-                        "signature length invalid: {} not in {:?}",
+                        "signature length invalid: {} not in {tag_len_range:?}",
                         sig.len(),
-                        tag_len_range
                     ));
                 }
 
@@ -702,10 +696,8 @@ impl crate::KeyMintTa {
             if now.milliseconds > auth_token.timestamp.milliseconds + 1000 * timeout_secs as i64 {
                 return Err(km_err!(
                     KeyUserNotAuthenticated,
-                    "now {:?} is later than auth token time {:?} + {} seconds",
-                    now,
+                    "now {now:?} is later than auth token time {:?} + {timeout_secs} seconds",
                     auth_token.timestamp,
-                    timeout_secs,
                 ));
             }
         }
@@ -730,7 +722,7 @@ impl crate::KeyMintTa {
                 ));
             }
             if self.verify_device_hmac(data, token).map_err(|e| {
-                km_err!(VerificationFailed, "failed to perform HMAC on confirmation token: {:?}", e)
+                km_err!(VerificationFailed, "failed to perform HMAC on confirmation token: {e:?}")
             })? {
                 Ok(())
             } else {
@@ -769,7 +761,7 @@ impl crate::KeyMintTa {
                 Some(_op) => false,
                 None => false,
             })
-            .ok_or_else(|| km_err!(InvalidOperation, "operation handle {:?} not found", op_handle))
+            .ok_or_else(|| km_err!(InvalidOperation, "operation handle {op_handle:?} not found"))
     }
 
     /// Execute the provided lambda over the associated [`Operation`], handling
