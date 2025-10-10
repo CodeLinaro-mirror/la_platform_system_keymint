@@ -368,6 +368,13 @@ impl KeyMintTa {
         }
     }
 
+    /// Sets the `DeviceHmac` implementation.
+    ///
+    /// This allows for dependency injection, decoupling the TA from the `ISharedSecret` HAL.
+    pub fn set_device_hmac(&mut self, device_hmac: Box<dyn device::DeviceHmac>) {
+        self.device_hmac = Some(device_hmac);
+    }
+
     /// Indicate whether the current device is acting as a StrongBox instance.
     pub fn is_strongbox(&self) -> bool {
         self.hw_info.security_level == SecurityLevel::Strongbox
