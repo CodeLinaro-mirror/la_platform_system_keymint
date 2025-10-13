@@ -104,11 +104,7 @@ impl KeyMintTa {
             SecurityLevel::TrustedEnvironment => "tee",
             SecurityLevel::Strongbox => "strongbox",
             l => {
-                return Err(km_err!(
-                    HardwareTypeUnavailable,
-                    "security level {:?} not supported",
-                    l
-                ))
+                return Err(km_err!(HardwareTypeUnavailable, "security level {l:?} not supported"))
             }
         };
 
@@ -232,9 +228,8 @@ impl KeyMintTa {
         if challenge.len() > MAX_CHALLENGE_SIZE_V2 {
             return Err(km_err!(
                 InvalidArgument,
-                "Challenge is too big. Actual: {:?}. Maximum: {:?}.",
+                "Challenge is too big. Actual: {:?}. Maximum: {MAX_CHALLENGE_SIZE_V2:?}.",
                 challenge.len(),
-                MAX_CHALLENGE_SIZE_V2
             ));
         }
         // Validate mac and extract the public keys to sign from the MacedPublicKeys

@@ -106,8 +106,7 @@ pub(crate) fn tbs_certificate<'a>(
                 alg => {
                     return Err(km_err!(
                         UnsupportedAlgorithm,
-                        "unexpected algorithm for public key {:?}",
-                        alg
+                        "unexpected algorithm for public key {alg:?}",
                     ))
                 }
             }
@@ -152,7 +151,7 @@ pub(crate) fn tbs_certificate<'a>(
     Ok(TbsCertificate {
         version: Version::V3,
         serial_number: SerialNumber::new(cert_serial)
-            .map_err(|e| der_err!(e, "failed to build serial number for {:?}", cert_serial))?,
+            .map_err(|e| der_err!(e, "failed to build serial number for {cert_serial:?}"))?,
         signature: AlgorithmIdentifier { oid: sig_alg_oid, parameters },
         issuer: RdnSequence::from_der(cert_issuer)
             .map_err(|e| der_err!(e, "failed to build issuer"))?,
@@ -172,12 +171,12 @@ pub(crate) fn tbs_certificate<'a>(
 /// Extract the Subject field from a `keymint::Certificate` as DER-encoded data.
 pub(crate) fn extract_subject(cert: &keymint::Certificate) -> Result<Vec<u8>, Error> {
     let cert = x509_cert::Certificate::from_der(&cert.encoded_certificate)
-        .map_err(|e| km_err!(EncodingError, "failed to parse certificate: {:?}", e))?;
+        .map_err(|e| km_err!(EncodingError, "failed to parse certificate: {e:?}"))?;
     let subject_data = cert
         .tbs_certificate
         .subject
         .to_der()
-        .map_err(|e| km_err!(EncodingError, "failed to DER-encode subject: {:?}", e))?;
+        .map_err(|e| km_err!(EncodingError, "failed to DER-encode subject: {e:?}"))?;
     Ok(subject_data)
 }
 
@@ -195,19 +194,19 @@ fn validity_time_from_datetime(when: DateTime) -> Result<Time, Error> {
         if duration >= MAX_UTC_TIME {
             Ok(Time::GeneralTime(
                 GeneralizedTime::from_unix_duration(duration)
-                    .map_err(|e| der_err!(e, "failed to build GeneralTime for {:?}", when))?,
+                    .map_err(|e| der_err!(e, "failed to build GeneralTime for {when:?}"))?,
             ))
         } else {
             Ok(Time::UtcTime(
                 UtcTime::from_unix_duration(duration)
-                    .map_err(|e| der_err!(e, "failed to build UtcTime for {:?}", when))?,
+                    .map_err(|e| der_err!(e, "failed to build UtcTime for {when:?}"))?,
             ))
         }
     } else {
         // TODO: cope with negative offsets from Unix Epoch.
         Ok(Time::GeneralTime(
             GeneralizedTime::from_unix_duration(Duration::from_secs(0))
-                .map_err(|e| der_err!(e, "failed to build GeneralizedTime(0) for {:?}", when))?,
+                .map_err(|e| der_err!(e, "failed to build GeneralizedTime(0) for {when:?}"))?,
         ))
     }
 }
@@ -319,8 +318,7 @@ pub(crate) fn attestation_extension<'a>(
             l => {
                 return Err(km_err!(
                     InvalidTag,
-                    "found characteristics for unexpected security level {:?}",
-                    l,
+                    "found characteristics for unexpected security level {l:?}",
                 ))
             }
         }
@@ -346,7 +344,7 @@ pub(crate) fn attestation_extension<'a>(
         &[],
     )?;
     let sec_level = SecurityLevel::try_from(security_level as u32)
-        .map_err(|_| km_err!(InvalidArgument, "invalid security level {:?}", security_level))?;
+        .map_err(|_| km_err!(InvalidArgument, "invalid security level {security_level:?}"))?;
     let ext = AttestationExtension {
         attestation_version: keymint_version,
         attestation_security_level: sec_level,
@@ -1295,7 +1293,7 @@ struct RootOfTrust<'a> {
 }
 
 impl<'a> From<&'a keymint::BootInfo> for RootOfTrust<'a> {
-    fn from(info: &keymint::BootInfo) -> RootOfTrust {
+    fn from(info: &keymint::BootInfo) -> RootOfTrust<'_> {
         let verified_boot_key: &[u8] = if info.verified_boot_key.is_empty() {
             // If an empty verified boot key was passed by the boot loader, set the verified boot
             // key in the attestation to all zeroes.

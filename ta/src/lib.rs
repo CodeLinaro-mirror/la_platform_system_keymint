@@ -595,9 +595,7 @@ impl KeyMintTa {
             } else {
                 return Err(km_err!(
                     RootOfTrustAlreadySet,
-                    "attempt to set boot info to {:?} but already set to {:?}",
-                    boot_info,
-                    existing_boot_info
+                    "attempt to set boot info to {boot_info:?} but already set to {existing_boot_info:?}",
                 ));
             }
         } else {
@@ -609,7 +607,7 @@ impl KeyMintTa {
                 if !boot_info.device_boot_locked {
                     info!("Bootloader is unlocked, clearing FRP secret.");
                     if let Err(e) = frp_secret_storage.store_secret([0; 32]) {
-                        error!("Failed to clear FRP secret: {:?}", e);
+                        error!("Failed to clear FRP secret: {e:?}");
                     }
                 }
             }
@@ -622,7 +620,7 @@ impl KeyMintTa {
             self.boot_info = Some(boot_info);
             self.rot_data =
                 Some(rot_info.into_vec().map_err(|e| {
-                    km_err!(EncodingError, "failed to encode root-of-trust: {:?}", e)
+                    km_err!(EncodingError, "failed to encode root-of-trust: {e:?}")
                 })?);
         }
         Ok(())
@@ -641,10 +639,7 @@ impl KeyMintTa {
             info!("Setting hal_info to {hal_info:?}");
             self.hal_info = Some(hal_info);
         } else {
-            warn!(
-                "Hal info already set to {:?}, ignoring new values {:?}",
-                self.hal_info, hal_info
-            );
+            warn!("Hal info already set to {:?}, ignoring new values {hal_info:?}", self.hal_info);
         }
     }
 
@@ -661,13 +656,13 @@ impl KeyMintTa {
         if aidl_version == self.aidl_version {
             debug!("Set aidl_version to existing version {aidl_version:?}");
         } else if cfg!(feature = "downgrade") {
-            info!("Change aidl_version from {:?} to {:?}", self.aidl_version, aidl_version);
+            info!("Change aidl_version from {:?} to {aidl_version:?}", self.aidl_version);
             self.aidl_version = aidl_version;
         } else {
             // Only allow HAL-triggered downgrade if the "downgrade" feature is enabled.
             warn!(
-                "Ignoring request to change aidl_version from {:?} to {:?}",
-                self.aidl_version, aidl_version
+                "Ignoring request to change aidl_version from {:?} to {aidl_version:?}",
+                self.aidl_version,
             );
         }
         Ok(())
