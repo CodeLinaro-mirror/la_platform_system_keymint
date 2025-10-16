@@ -49,7 +49,7 @@ impl crate::KeyMintTa {
         )?);
 
         // Potentially hand the negotiated HMAC key off to hardware.
-        self.device_hmac = Some(self.dev.keys.hmac_key_agreed(&key).unwrap_or_else(|| {
+        self.set_device_hmac(self.dev.keys.hmac_key_agreed(&key).unwrap_or_else(|| {
             // Key not installed into hardware, so build & use a local impl.
             Box::new(SoftDeviceHmac { key })
         }));
