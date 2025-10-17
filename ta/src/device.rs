@@ -203,6 +203,10 @@ pub trait BootloaderStatus {
 pub trait RetrieveRpcArtifacts {
     /// Retrieve secret bytes (of the given output length) derived from a hardware backed key.
     /// For a given context, the output is deterministic.
+    ///
+    /// This method is used by the default implementation of `compute_hmac_sha256`. It is not
+    /// needed if `compute_hmac_sha256` is provided with a non-default implementation that
+    /// uses its own key.
     fn derive_bytes_from_hbk(
         &self,
         hkdf: &dyn crypto::Hkdf,
@@ -210,13 +214,15 @@ pub trait RetrieveRpcArtifacts {
         output_len: usize,
     ) -> Result<Vec<u8>, Error>;
 
-    /// Compute HMAC_SHA256 over the given input using a key derived from hardware.
+    /// Compute HMAC_SHA256 over the given `input`, using a key that persists at least until reboot.
     fn compute_hmac_sha256(
         &self,
         hmac: &dyn crypto::Hmac,
         hkdf: &dyn crypto::Hkdf,
         input: &[u8],
     ) -> Result<Vec<u8>, Error> {
+        // Default implementation uses a key derived from hardware (which
+        // therefore persists even beyond reboot).
         let secret = self.derive_bytes_from_hbk(hkdf, RPC_HMAC_KEY_CONTEXT, RPC_HMAC_KEY_LEN)?;
         crypto::hmac_sha256(hmac, &secret, input)
     }
