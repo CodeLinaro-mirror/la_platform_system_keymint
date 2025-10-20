@@ -22,7 +22,7 @@ use der::{referenced::RefToOwned, Decode, Encode, Sequence};
 use kmr_common::{
     crypto::{self, aes, rsa, KeyMaterial, OpaqueOr},
     der_err, get_bool_tag_value, get_opt_tag_value, get_tag_value, keyblob, km_err, tag,
-    try_to_vec, vec_try_with_capacity, Error, FallibleAllocExt,
+    try_to_vec, vec_try_with_capacity, Error, ErrorKind, FallibleAllocExt,
 };
 use kmr_wire::{
     keymint::{
@@ -112,7 +112,7 @@ impl crate::KeyMintTa {
     pub(crate) fn get_signing_info(
         &self,
         key_type: device::SigningKeyType,
-    ) -> Result<SigningInfo, Error> {
+    ) -> Result<SigningInfo<'_>, Error> {
         let sign_info = self.dev.sign_info.as_ref().ok_or_else(|| {
             km_err!(AttestationKeysNotProvisioned, "batch attestation keys not available")
         })?;
@@ -385,6 +385,16 @@ impl crate::KeyMintTa {
             //   cert chain to append
             // - whether to include an attestation extension
             let attest_challenge = get_opt_tag_value!(params, AttestationChallenge)?;
+
+            #[cfg(feature = "disable_attestation_when_frp_active")]
+            if attest_challenge.is_some() && self.frp_active() {
+                error!("Disallowing attestation request because FRP is active.");
+                return Err(km_err!(
+                    // TODO: Create and use ErrorCode::ATTESTATION_DISABLED_BY FRP.  b/443942288.
+                    InvalidOperation,
+                    "Attestation not allowed while FRP is active"
+                ));
+            }
 
             let signing_info = if let Some(attest_challenge) = attest_challenge {
                 // Attestation requested.
@@ -698,29 +708,30 @@ impl crate::KeyMintTa {
     ) -> Result<Vec<u8>, Error> {
         let (mut keyblob, mut modified) =
             match self.keyblob_parse_decrypt_backlevel(keyblob_to_upgrade, &upgrade_params) {
-                Ok(v) => (v.0, false),
-                Err(Error::Hal(ErrorCode::KeyRequiresUpgrade, _)) => {
-                    // Because `keyblob_parse_decrypt_backlevel` explicitly allows back-level
-                    // versioned keys, a `KeyRequiresUpgrade` error indicates that the keyblob looks
-                    // to be in legacy format.  Try to convert it.
-                    let legacy_handler =
-                        self.dev.legacy_key.as_mut().ok_or_else(|| {
+                Ok(result) => (result.keyblob, result.kek_context_is_outdated),
+                Err(e) => match e.kind() {
+                    ErrorKind::Hal(ErrorCode::KeyRequiresUpgrade, _) => {
+                        // Because `keyblob_parse_decrypt_backlevel` explicitly allows back-level
+                        // versioned keys, a `KeyRequiresUpgrade` error indicates that the keyblob
+                        // looks to be in legacy format.  Try to convert it.
+                        let legacy_handler = self.dev.legacy_key.as_mut().ok_or_else(|| {
                             km_err!(KeymintNotConfigured, "no legacy key handler")
                         })?;
-                    (
-                        legacy_handler.convert_legacy_key(
-                            keyblob_to_upgrade,
-                            &upgrade_params,
-                            self.boot_info
-                                .as_ref()
-                                .ok_or_else(|| km_err!(HardwareNotYetAvailable, "no boot info"))?,
-                            self.hw_info.security_level,
-                        )?,
-                        // Force the emission of a new keyblob even if versions are the same.
-                        true,
-                    )
-                }
-                Err(e) => return Err(e),
+                        (
+                            legacy_handler.convert_legacy_key(
+                                keyblob_to_upgrade,
+                                &upgrade_params,
+                                self.boot_info.as_ref().ok_or_else(|| {
+                                    km_err!(HardwareNotYetAvailable, "no boot info")
+                                })?,
+                                self.hw_info.security_level,
+                            )?,
+                            // Force the emission of a new keyblob even if versions are the same.
+                            true,
+                        )
+                    }
+                    _ => return Err(e),
+                },
             };
 
         fn upgrade(v: &mut u32, curr: u32, name: &str) -> Result<bool, Error> {
@@ -795,9 +806,9 @@ impl crate::KeyMintTa {
             return Ok(Vec::new());
         }
 
-        // Now re-build the keyblob. Use a potentially fresh key encryption key, and potentially a
-        // new secure deletion secret slot. (The old slot will be released when Keystore performs
-        // the corresponding `deleteKey` operation on the old keyblob.
+        // Now re-build the keyblob. Use a potentially fresh key encryption key and context, and
+        // potentially a new secure deletion secret slot. (The old slot will be released when
+        // Keystore performs the corresponding `deleteKey` operation on the old keyblob.)
         let kek_context = self.dev.keys.kek_context()?;
         let root_kek = self.root_kek(&kek_context)?;
         let hidden = tag::hidden(&upgrade_params, self.root_of_trust()?)?;

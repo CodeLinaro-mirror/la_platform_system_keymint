@@ -17,8 +17,9 @@
 
 extern crate alloc;
 
+use alloc::boxed::Box;
 use alloc::string::ToString;
-use kmr_common::Error;
+use kmr_common::{crypto, Error, ErrorKind};
 use kmr_wire::keymint::{Digest, ErrorCode};
 use log::error;
 use openssl::hash::MessageDigest;
@@ -47,6 +48,28 @@ use err::*;
 mod tests;
 
 mod types;
+
+/// Return a collection of BoringSSL-backed cryptographic trait implementations (together
+/// with the provided RNG and clock implementations).
+#[cfg(soong)]
+pub fn implementation(
+    rng: Box<dyn crypto::Rng>,
+    clock: Box<dyn crypto::MonotonicClock>,
+) -> crypto::Implementation {
+    crypto::Implementation {
+        rng,
+        clock: Some(clock),
+        compare: Box::new(eq::BoringEq),
+        aes: Box::new(aes::BoringAes),
+        des: Box::new(des::BoringDes),
+        hmac: Box::new(hmac::BoringHmac),
+        rsa: Box::<rsa::BoringRsa>::default(),
+        ec: Box::<ec::BoringEc>::default(),
+        ckdf: Box::new(aes_cmac::BoringAesCmac),
+        hkdf: Box::new(hmac::BoringHmac),
+        sha256: Box::new(sha256::BoringSha256),
+    }
+}
 
 /// Map an OpenSSL `ErrorStack` into a KeyMint [`ErrorCode`] value.
 pub(crate) fn map_openssl_errstack(errs: &openssl::error::ErrorStack) -> ErrorCode {
@@ -84,19 +107,21 @@ macro_rules! ossl {
     }
 }
 
-/// Macro to emit a closure that builds an [`Error::Hal`] instance, based on an
-/// openssl `ErrorStack` together with a format-like message.
+/// Macro to emit a closure that builds an [`Error`] instance, based on an openssl `ErrorStack`
+/// together with a format-like message.
 #[macro_export]
 macro_rules! openssl_err {
     { $($arg:tt)+ } => {
-        |e| kmr_common::Error::Hal(
-            $crate::map_openssl_errstack(&e),
-            alloc::format!("{}:{}: {}: {:?}", file!(), line!(), format_args!($($arg)+), e)
-        )
+        |e| {
+            kmr_common::km_err_new!(kmr_common::ErrorKind::Hal(
+                $crate::map_openssl_errstack(&e),
+                alloc::format!("{}: {:?}", format_args!($($arg)+), e),
+            ))
+        }
     };
 }
 
-/// Macro to emit a closure that builds an [`Error::Hal`] instance, based on an openssl `ErrorStack`
+/// Macro to emit a closure that builds an [`Error`] instance, based on an openssl `ErrorStack`
 /// together with a format-like message, plus default `ErrorCode` to be used if no OpenSSL error is
 /// available.
 #[macro_export]
@@ -109,10 +134,10 @@ macro_rules! openssl_err_or {
             } else {
                 $crate::map_openssl_err(&errors[0]) // safe: length checked above
             };
-            kmr_common::Error::Hal(
+            kmr_common::km_err_new!(kmr_common::ErrorKind::Hal(
                 errcode,
-                alloc::format!("{}:{}: {}: {:?}", file!(), line!(), format_args!($($arg)+), e)
-            )
+                alloc::format!("{}: {:?}", format_args!($($arg)+), e)
+            ))
         }
     };
 }
@@ -121,7 +146,7 @@ macro_rules! openssl_err_or {
 #[macro_export]
 macro_rules! malloc_err {
     {} => {
-        kmr_common::Error::Alloc(concat!(file!(), ":", line!(), ": BoringSSL allocation failed"))
+        kmr_common::km_err_new!(kmr_common::ErrorKind::Alloc("BoringSSL allocation failed"))
     };
 }
 
@@ -132,7 +157,7 @@ fn openssl_last_err() -> Error {
 
 /// Translate a returned `openssl` error into [`Error`].
 fn from_openssl_err(errs: openssl::error::ErrorStack) -> Error {
-    Error::Hal(map_openssl_errstack(&errs), "OpenSSL failure".to_string())
+    ErrorKind::Hal(map_openssl_errstack(&errs), "OpenSSL failure".to_string()).into()
 }
 
 /// Translate a [`keymint::Digest`] into an OpenSSL [`MessageDigest`].

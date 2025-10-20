@@ -23,11 +23,12 @@ use der::{
     oid::AssociatedOid,
     Enumerated, Sequence,
 };
-use der::{Decode, Encode, EncodeValue, ErrorKind, Length};
+use der::{Decode, Encode, EncodeValue, ErrorKind as DerErrorKind, Length};
 use flagset::FlagSet;
 use kmr_common::crypto::KeyMaterial;
 use kmr_common::{
     crypto, der_err, get_tag_value, km_err, tag, try_to_vec, vec_try_with_capacity, Error,
+    ErrorKind,
 };
 use kmr_common::{get_bool_tag_value, get_opt_tag_value, FallibleAllocExt};
 use kmr_wire::{
@@ -105,8 +106,7 @@ pub(crate) fn tbs_certificate<'a>(
                 alg => {
                     return Err(km_err!(
                         UnsupportedAlgorithm,
-                        "unexpected algorithm for public key {:?}",
-                        alg
+                        "unexpected algorithm for public key {alg:?}",
                     ))
                 }
             }
@@ -151,7 +151,7 @@ pub(crate) fn tbs_certificate<'a>(
     Ok(TbsCertificate {
         version: Version::V3,
         serial_number: SerialNumber::new(cert_serial)
-            .map_err(|e| der_err!(e, "failed to build serial number for {:?}", cert_serial))?,
+            .map_err(|e| der_err!(e, "failed to build serial number for {cert_serial:?}"))?,
         signature: AlgorithmIdentifier { oid: sig_alg_oid, parameters },
         issuer: RdnSequence::from_der(cert_issuer)
             .map_err(|e| der_err!(e, "failed to build issuer"))?,
@@ -171,12 +171,12 @@ pub(crate) fn tbs_certificate<'a>(
 /// Extract the Subject field from a `keymint::Certificate` as DER-encoded data.
 pub(crate) fn extract_subject(cert: &keymint::Certificate) -> Result<Vec<u8>, Error> {
     let cert = x509_cert::Certificate::from_der(&cert.encoded_certificate)
-        .map_err(|e| km_err!(EncodingError, "failed to parse certificate: {:?}", e))?;
+        .map_err(|e| km_err!(EncodingError, "failed to parse certificate: {e:?}"))?;
     let subject_data = cert
         .tbs_certificate
         .subject
         .to_der()
-        .map_err(|e| km_err!(EncodingError, "failed to DER-encode subject: {:?}", e))?;
+        .map_err(|e| km_err!(EncodingError, "failed to DER-encode subject: {e:?}"))?;
     Ok(subject_data)
 }
 
@@ -184,7 +184,7 @@ pub(crate) fn extract_subject(cert: &keymint::Certificate) -> Result<Vec<u8>, Er
 /// RFC 5280 section 4.1.2.5 requires that UtcTime is used up to 2049
 /// and GeneralizedTime from 2050 onwards
 fn validity_time_from_datetime(when: DateTime) -> Result<Time, Error> {
-    let dt_err = |_| Error::Der(ErrorKind::DateTime);
+    let dt_err = |_| Error::from(ErrorKind::Der(DerErrorKind::DateTime));
     let secs_since_epoch: i64 = when.ms_since_epoch / 1000;
 
     if when.ms_since_epoch >= 0 {
@@ -194,19 +194,19 @@ fn validity_time_from_datetime(when: DateTime) -> Result<Time, Error> {
         if duration >= MAX_UTC_TIME {
             Ok(Time::GeneralTime(
                 GeneralizedTime::from_unix_duration(duration)
-                    .map_err(|e| der_err!(e, "failed to build GeneralTime for {:?}", when))?,
+                    .map_err(|e| der_err!(e, "failed to build GeneralTime for {when:?}"))?,
             ))
         } else {
             Ok(Time::UtcTime(
                 UtcTime::from_unix_duration(duration)
-                    .map_err(|e| der_err!(e, "failed to build UtcTime for {:?}", when))?,
+                    .map_err(|e| der_err!(e, "failed to build UtcTime for {when:?}"))?,
             ))
         }
     } else {
         // TODO: cope with negative offsets from Unix Epoch.
         Ok(Time::GeneralTime(
             GeneralizedTime::from_unix_duration(Duration::from_secs(0))
-                .map_err(|e| der_err!(e, "failed to build GeneralizedTime(0) for {:?}", when))?,
+                .map_err(|e| der_err!(e, "failed to build GeneralizedTime(0) for {when:?}"))?,
         ))
     }
 }
@@ -318,8 +318,7 @@ pub(crate) fn attestation_extension<'a>(
             l => {
                 return Err(km_err!(
                     InvalidTag,
-                    "found characteristics for unexpected security level {:?}",
-                    l,
+                    "found characteristics for unexpected security level {l:?}",
                 ))
             }
         }
@@ -345,7 +344,7 @@ pub(crate) fn attestation_extension<'a>(
         &[],
     )?;
     let sec_level = SecurityLevel::try_from(security_level as u32)
-        .map_err(|_| km_err!(InvalidArgument, "invalid security level {:?}", security_level))?;
+        .map_err(|_| km_err!(InvalidArgument, "invalid security level {security_level:?}"))?;
     let ext = AttestationExtension {
         attestation_version: keymint_version,
         attestation_security_level: sec_level,
@@ -413,11 +412,61 @@ pub(crate) fn attestation_extension<'a>(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorizationList<'a> {
     pub auths: Cow<'a, [KeyParam]>,
+    /// Whether to include `UserSecureId` value if found in `auths` when encoding.
+    pub encode_sid: bool,
     pub keygen_params: Cow<'a, [KeyParam]>,
     pub rot_info: Option<KeyParam>,
     pub app_id: Option<KeyParam>,
     pub additional_attestation_info: Cow<'a, [KeyParam]>,
 }
+
+/// Tags used in `AuthorizationList` in the schema-defined order.
+const AUTHORIZATION_LIST_TAGS: &[Tag] = &[
+    Tag::Purpose,
+    Tag::Algorithm,
+    Tag::KeySize,
+    Tag::BlockMode,
+    Tag::Digest,
+    Tag::Padding,
+    Tag::CallerNonce,
+    Tag::MinMacLength,
+    Tag::EcCurve,
+    Tag::RsaPublicExponent,
+    Tag::RsaOaepMgfDigest,
+    Tag::RollbackResistance,
+    Tag::EarlyBootOnly,
+    Tag::ActiveDatetime,
+    Tag::OriginationExpireDatetime,
+    Tag::UsageExpireDatetime,
+    Tag::UsageCountLimit,
+    Tag::UserSecureId,
+    Tag::NoAuthRequired,
+    Tag::UserAuthType,
+    Tag::AuthTimeout,
+    Tag::AllowWhileOnBody,
+    Tag::TrustedUserPresenceRequired,
+    Tag::TrustedConfirmationRequired,
+    Tag::UnlockedDeviceRequired,
+    Tag::CreationDatetime,
+    Tag::Origin,
+    Tag::RootOfTrust,
+    Tag::OsVersion,
+    Tag::OsPatchlevel,
+    Tag::AttestationApplicationId,
+    Tag::AttestationIdBrand,
+    Tag::AttestationIdDevice,
+    Tag::AttestationIdProduct,
+    Tag::AttestationIdSerial,
+    Tag::AttestationIdImei,
+    Tag::AttestationIdMeid,
+    Tag::AttestationIdManufacturer,
+    Tag::AttestationIdModel,
+    Tag::VendorPatchlevel,
+    Tag::BootPatchlevel,
+    Tag::DeviceUniqueAttestation,
+    Tag::AttestationIdSecondImei,
+    Tag::ModuleHash,
+];
 
 /// Macro to check that a specified attestation ID matches the provisioned value.
 macro_rules! check_attestation_id {
@@ -440,9 +489,31 @@ macro_rules! check_attestation_id {
     }
 }
 
+/// Macro to check that a specified attestation ID matches one of two provisioned values.
+macro_rules! check_attestation_id_either {
+    {
+        $params:expr, $variant:ident, $mustmatch:expr
+    } => {
+        {
+            if let Some(val) = get_opt_tag_value!($params, $variant)? {
+                match $mustmatch {
+                    None => return Err(km_err!(CannotAttestIds,
+                                               "no attestation IDs provisioned")),
+                    Some((want1, want2)) => if val != want1 && val != want2 {
+                        return Err(km_err!(CannotAttestIds,
+                                           "attestation ID mismatch for {}",
+                                           stringify!($variant)))
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl<'a> AuthorizationList<'a> {
     /// Build an `AuthorizationList` ready for serialization. This constructor will fail if device
-    /// ID attestation is required but the relevant IDs are missing or mismatched.
+    /// ID attestation is required but the relevant IDs are missing or mismatched.  Any
+    /// `UserSecureId` values included in `auths` will be ignored on encoding.
     fn new(
         auths: &'a [KeyParam],
         keygen_params: &'a [KeyParam],
@@ -467,11 +538,15 @@ impl<'a> AuthorizationList<'a> {
             AttestationIdSerial,
             attestation_ids.map(|v| &v.serial)
         );
-        check_attestation_id!(keygen_params, AttestationIdImei, attestation_ids.map(|v| &v.imei));
-        check_attestation_id!(
+        check_attestation_id_either!(
+            keygen_params,
+            AttestationIdImei,
+            attestation_ids.map(|v| (&v.imei, &v.imei2))
+        );
+        check_attestation_id_either!(
             keygen_params,
             AttestationIdSecondImei,
-            attestation_ids.map(|v| &v.imei2)
+            attestation_ids.map(|v| (&v.imei, &v.imei2))
         );
         check_attestation_id!(keygen_params, AttestationIdMeid, attestation_ids.map(|v| &v.meid));
         check_attestation_id!(
@@ -488,6 +563,7 @@ impl<'a> AuthorizationList<'a> {
         };
         Ok(Self {
             auths: auths.into(),
+            encode_sid: false,
             keygen_params: keygen_params.into(),
             rot_info: encoded_rot.map(KeyParam::RootOfTrust),
             app_id: match app_id {
@@ -499,13 +575,18 @@ impl<'a> AuthorizationList<'a> {
     }
 
     /// Build an `AuthorizationList` using a set of key parameters.
+    ///
     /// The checks for the attestation ids are not run here in contrast to `AuthorizationList::new`
     /// because this method is used to construct an `AuthorizationList` in the decode path rather
-    /// than in the encode path. Note: decode path is currently used only by
-    /// `KeyMintTa::import_wrapped_key` functionality, which only uses `auth` field of
-    /// `AuthorizationList`. Decoding for the whole `AuthorizationList` is added here for the
-    /// completeness and anticipating a future use case of decoding the attestation extension from
-    /// an X.509 certificate.
+    /// than in the encode path.
+    ///
+    /// Any (single) `UserSecureId` value in `key_params` will be included when the
+    /// `AuthorizationList` is DER-encoded.
+    ///
+    /// Note: decode path is currently used only by `KeyMintTa::import_wrapped_key` functionality,
+    /// which only uses `auth` field of `AuthorizationList`. Decoding for the whole
+    /// `AuthorizationList` is added here for the completeness and anticipating a future use case of
+    /// decoding the attestation extension from an X.509 certificate.
     fn new_from_key_params(key_params: Vec<KeyParam>) -> Result<Self, der::Error> {
         let mut auths = Vec::new();
         let mut keygen_params = Vec::new();
@@ -537,6 +618,7 @@ impl<'a> AuthorizationList<'a> {
         }
         Ok(AuthorizationList {
             auths: auths.into(),
+            encode_sid: true,
             keygen_params: keygen_params.into(),
             rot_info: rot,
             app_id: attest_app_id,
@@ -551,57 +633,6 @@ fn der_alloc_err<T>(_e: T) -> der::Error {
     der::Error::new(der::ErrorKind::Overlength, der::Length::ZERO)
 }
 
-/// All the fields of AuthorizationList sequence are optional. Therefore, the expected tag and the
-/// decoded tag might be different. If they don't match, return the decoded tag to be used in a
-/// future call to this method. If the two tags match, continue to read the value,
-/// populate key parameters and return None, so that the next call to this method will
-/// decode the tag from bytes. See the implementation of [`der::DecodeValue`] trait for
-/// AuthorizationList.
-fn decode_opt_field<'a, R: der::Reader<'a>>(
-    decoder: &mut R,
-    already_read_tag: Option<keymint::Tag>,
-    expected_tag: keymint::Tag,
-    key_params: &mut Vec<KeyParam>,
-) -> Result<Option<keymint::Tag>, der::Error> {
-    // Decode the tag if no tag is provided
-    let tag =
-        if already_read_tag.is_none() { decode_tag_from_bytes(decoder)? } else { already_read_tag };
-    match tag {
-        Some(tag) if tag == expected_tag => {
-            // Decode the length of the inner encoding
-            let inner_len = Length::decode(decoder)?;
-            if decoder.remaining_len() < inner_len {
-                return Err(der::ErrorKind::Incomplete {
-                    expected_len: inner_len,
-                    actual_len: decoder.remaining_len(),
-                }
-                .into());
-            }
-            let next_tlv = decoder.tlv_bytes()?;
-            decode_value_from_bytes(expected_tag, next_tlv, key_params)?;
-            Ok(None)
-        }
-        Some(tag) => Ok(Some(tag)), // Return the tag for which the value is unread.
-        None => Ok(None),
-    }
-}
-
-macro_rules! process_authz_list_tags {
-    {$decoder:expr, $key_params:expr, ($($tag:ident),*)} => {
-        let mut non_consumed_tag: Option<Tag> = None;
-        ($(non_consumed_tag = decode_opt_field($decoder,
-                                               non_consumed_tag,
-                                               Tag::$tag,
-                                               $key_params)?),*);
-        if non_consumed_tag.is_some(){
-            return Err($decoder.error(der::ErrorKind::Incomplete {
-                expected_len: Length::ZERO,
-                actual_len: $decoder.remaining_len(),
-            }));
-        }
-    };
-}
-
 /// Implementation of [`der::DecodeValue`] which constructs an AuthorizationList from bytes.
 impl<'a> der::DecodeValue<'a> for AuthorizationList<'a> {
     fn decode_value<R: der::Reader<'a>>(decoder: &mut R, header: der::Header) -> der::Result<Self> {
@@ -612,6 +643,7 @@ impl<'a> der::DecodeValue<'a> for AuthorizationList<'a> {
         if header.length.is_zero() {
             return Ok(AuthorizationList {
                 auths: Vec::new().into(),
+                encode_sid: true,
                 keygen_params: Vec::new().into(),
                 rot_info: None,
                 app_id: None,
@@ -619,65 +651,38 @@ impl<'a> der::DecodeValue<'a> for AuthorizationList<'a> {
             });
         }
         if decoder.remaining_len() < header.length {
-            return Err(der::ErrorKind::Incomplete {
+            return Err(decoder.error(der::ErrorKind::Incomplete {
                 expected_len: header.length,
                 actual_len: decoder.remaining_len(),
-            })?;
+            }));
         }
+
         let mut key_params = Vec::new();
-        process_authz_list_tags!(
-            decoder,
-            &mut key_params,
-            (
-                Purpose,
-                Algorithm,
-                KeySize,
-                BlockMode,
-                Digest,
-                Padding,
-                CallerNonce,
-                MinMacLength,
-                EcCurve,
-                RsaPublicExponent,
-                RsaOaepMgfDigest,
-                RollbackResistance,
-                EarlyBootOnly,
-                ActiveDatetime,
-                OriginationExpireDatetime,
-                UsageExpireDatetime,
-                UsageCountLimit,
-                UserSecureId,
-                NoAuthRequired,
-                UserAuthType,
-                AuthTimeout,
-                AllowWhileOnBody,
-                TrustedUserPresenceRequired,
-                TrustedConfirmationRequired,
-                UnlockedDeviceRequired,
-                CreationDatetime,
-                CreationDatetime,
-                Origin,
-                RootOfTrust,
-                OsVersion,
-                OsPatchlevel,
-                AttestationApplicationId,
-                AttestationIdBrand,
-                AttestationIdDevice,
-                AttestationIdProduct,
-                AttestationIdSerial,
-                AttestationIdSerial,
-                AttestationIdSerial,
-                AttestationIdImei,
-                AttestationIdMeid,
-                AttestationIdManufacturer,
-                AttestationIdModel,
-                VendorPatchlevel,
-                BootPatchlevel,
-                DeviceUniqueAttestation,
-                AttestationIdSecondImei,
-                ModuleHash
-            )
-        );
+        let mut non_consumed_tag: Option<Tag> = None;
+        for &tag in AUTHORIZATION_LIST_TAGS {
+            if non_consumed_tag.is_none() {
+                non_consumed_tag = decode_tag_from_bytes(decoder)?;
+            }
+            if non_consumed_tag == Some(tag) {
+                non_consumed_tag = None;
+                // Decode the length of the inner encoding
+                let inner_len = Length::decode(decoder)?;
+                if decoder.remaining_len() < inner_len {
+                    return Err(decoder.error(der::ErrorKind::Incomplete {
+                        expected_len: inner_len,
+                        actual_len: decoder.remaining_len(),
+                    }));
+                }
+                let next_tlv = decoder.tlv_bytes()?;
+                decode_value_from_bytes(tag, next_tlv, &mut key_params)?;
+            }
+        }
+        if non_consumed_tag.is_some() {
+            return Err(decoder.error(der::ErrorKind::Incomplete {
+                expected_len: Length::ZERO,
+                actual_len: decoder.remaining_len(),
+            }));
+        }
 
         // Process the key params and construct the `AuthorizationList`
         AuthorizationList::new_from_key_params(key_params)
@@ -1097,6 +1102,11 @@ impl EncodeValue for AuthorizationList<'_> {
             + asn1_len(asn1_integer_datetime!(self.auths, OriginationExpireDatetime))?
             + asn1_len(asn1_integer_datetime!(self.auths, UsageExpireDatetime))?
             + asn1_len(asn1_integer!(self.auths, UsageCountLimit))?
+            + if self.encode_sid {
+                asn1_len(asn1_integer!(self.auths, UserSecureId))?
+            } else {
+                Length::ZERO
+            }
             + asn1_len(asn1_null!(self.auths, NoAuthRequired))?
             + asn1_len(asn1_integer!(self.auths, UserAuthType))?
             + asn1_len(asn1_integer!(self.auths, AuthTimeout))?
@@ -1160,8 +1170,11 @@ impl EncodeValue for AuthorizationList<'_> {
         asn1_val(asn1_integer_datetime!(self.auths, OriginationExpireDatetime), writer)?;
         asn1_val(asn1_integer_datetime!(self.auths, UsageExpireDatetime), writer)?;
         asn1_val(asn1_integer!(self.auths, UsageCountLimit), writer)?;
-        // Skip `UserSecureId` as it's only included in the extension for
+        // Note that `UserSecureId` is only included in the extension for
         // importWrappedKey() cases.
+        if self.encode_sid {
+            asn1_val(asn1_integer!(self.auths, UserSecureId), writer)?;
+        }
         asn1_val(asn1_null!(self.auths, NoAuthRequired), writer)?;
         asn1_val(asn1_integer!(self.auths, UserAuthType), writer)?;
         asn1_val(asn1_integer!(self.auths, AuthTimeout), writer)?;
@@ -1280,7 +1293,7 @@ struct RootOfTrust<'a> {
 }
 
 impl<'a> From<&'a keymint::BootInfo> for RootOfTrust<'a> {
-    fn from(info: &keymint::BootInfo) -> RootOfTrust {
+    fn from(info: &keymint::BootInfo) -> RootOfTrust<'_> {
         let verified_boot_key: &[u8] = if info.verified_boot_key.is_empty() {
             // If an empty verified boot key was passed by the boot loader, set the verified boot
             // key in the attestation to all zeroes.
@@ -1393,7 +1406,10 @@ mod tests {
             "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
         );
         assert_eq!(hex::encode(&got), want);
-        assert_eq!(AttestationExtension::from_der(&got).unwrap(), ext);
+        let mut parsed = AttestationExtension::from_der(&got).unwrap();
+        parsed.sw_enforced.encode_sid = false;
+        parsed.hw_enforced.encode_sid = false;
+        assert_eq!(parsed, ext);
     }
 
     #[test]
@@ -1413,9 +1429,21 @@ mod tests {
     }
 
     #[test]
-    fn test_authz_list_encode_decode() {
+    fn test_authorization_list_tags_ordered_by_raw_value() {
+        assert!(AUTHORIZATION_LIST_TAGS.iter().map(|tag| raw_tag_value(*tag)).is_sorted());
+    }
+
+    #[test]
+    fn test_authorization_list_tags_are_unique() {
+        let mut deduped = AUTHORIZATION_LIST_TAGS.to_vec();
+        deduped.dedup();
+        assert_eq!(AUTHORIZATION_LIST_TAGS.len(), deduped.len())
+    }
+
+    #[test]
+    fn test_authorization_list_encode_decode() {
         let additional_attestation_info = [KeyParam::ModuleHash(vec![0xaa; 32])];
-        let authz_list = AuthorizationList::new(
+        let authorization_list = AuthorizationList::new(
             &[KeyParam::Algorithm(keymint::Algorithm::Ec)],
             &[],
             None,
@@ -1429,7 +1457,7 @@ mod tests {
             &additional_attestation_info,
         )
         .unwrap();
-        let got = authz_list.to_der().unwrap();
+        let got = authorization_list.to_der().unwrap();
         let want: &str = concat!(
             "307b", // SEQUENCE len 123
             "a203", // EXPLICIT [2]
@@ -1457,13 +1485,15 @@ mod tests {
         // encode
         assert_eq!(hex::encode(&got), want);
         // decode from encoded
-        assert_eq!(AuthorizationList::from_der(got.as_slice()).unwrap(), authz_list);
+        let mut parsed = AuthorizationList::from_der(got.as_slice()).unwrap();
+        parsed.encode_sid = false;
+        assert_eq!(parsed, authorization_list);
     }
 
     #[test]
-    fn test_authz_list_user_secure_id_encode() {
+    fn test_authorization_list_user_secure_id_encode() {
         // Create an authorization list that includes multiple values for SecureUserId.
-        let authz_list = AuthorizationList::new(
+        let authorization_list = AuthorizationList::new(
             &[
                 KeyParam::Algorithm(keymint::Algorithm::Ec),
                 KeyParam::UserSecureId(42),
@@ -1482,7 +1512,7 @@ mod tests {
             &[],
         )
         .unwrap();
-        let got = authz_list.to_der().unwrap();
+        let got = authorization_list.to_der().unwrap();
         // The `SecureUserId` values are *not* included in the generated output.
         let want: &str = concat!(
             "3055", // SEQUENCE len 55
@@ -1508,7 +1538,7 @@ mod tests {
     }
 
     #[test]
-    fn test_authz_list_user_secure_id_decode() {
+    fn test_authorization_list_user_secure_id_decode() {
         // Create a DER-encoded `AuthorizationList` that includes a `UserSecureId` value.
         let input = hex::decode(concat!(
             "305c",   // SEQUENCE
@@ -1534,7 +1564,8 @@ mod tests {
             "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
         ))
         .unwrap();
-        let got = AuthorizationList::from_der(&input).unwrap();
+        let mut got = AuthorizationList::from_der(&input).unwrap();
+        got.encode_sid = false;
 
         let want = AuthorizationList::new(
             &[KeyParam::Algorithm(keymint::Algorithm::Ec), KeyParam::UserSecureId(2)],
@@ -1555,9 +1586,9 @@ mod tests {
     }
 
     #[test]
-    fn test_authz_list_dup_encode() {
+    fn test_authorization_list_dup_encode() {
         use kmr_wire::keymint::Digest;
-        let authz_list = AuthorizationList::new(
+        let authorization_list = AuthorizationList::new(
             &[
                 KeyParam::Digest(Digest::None),
                 KeyParam::Digest(Digest::Sha1),
@@ -1575,14 +1606,14 @@ mod tests {
             &[],
         )
         .unwrap();
-        let got = authz_list.to_der().unwrap();
+        let got = authorization_list.to_der().unwrap();
         assert!(AuthorizationList::from_der(got.as_slice()).is_ok());
     }
 
     #[test]
-    fn test_authz_list_order_fail() {
+    fn test_authorization_list_order_fail() {
         use kmr_wire::keymint::Digest;
-        let authz_list = AuthorizationList::new(
+        let authorization_list = AuthorizationList::new(
             &[KeyParam::Digest(Digest::Sha1), KeyParam::Digest(Digest::None)],
             &[],
             None,
@@ -1596,6 +1627,6 @@ mod tests {
             &[],
         )
         .unwrap();
-        assert!(authz_list.to_der().is_err());
+        assert!(authorization_list.to_der().is_err());
     }
 }
