@@ -35,32 +35,9 @@ rust_library {
         "libenumn",
         "libkmr_derive",
     ],
-}
-
-rust_library_rlib {
-    name: "libkmr_wire_nostd",
-    crate_name: "kmr_wire",
-    srcs: ["src/lib.rs"],
-    vendor_available: true,
-    edition: "2021",
-    lints: "android",
-    rustlibs: [
-        "libciborium_nostd",
-        "libciborium_io_nostd",
-        "libcoset_nostd",
-        "liblog_rust_nostd",
-        "libzeroize_nostd",
-    ],
-    proc_macros: [
-        "libenumn",
-        "libkmr_derive",
-    ],
-    prefer_rlib: true,
-    no_stdlibs: true,
-    stdlibs: [
-        "libcompiler_builtins.rust_sysroot",
-        "libcore.rust_sysroot",
-    ],
+    no_std: {
+        enabled: true,
+    },
 }
 
 rust_test_host {
