@@ -55,9 +55,6 @@ pub struct Implementation {
 
     /// SHA-256 implementation.
     pub sha256: Box<dyn Sha256>,
-
-    /// ML-DSA implementation.
-    pub mldsa: Box<dyn MlDsa>,
 }
 
 /// Abstraction of a random number generator that is cryptographically secure
@@ -408,47 +405,6 @@ pub trait Ec: Send {
     ) -> Result<Box<dyn AccumulatingOperation>, Error>;
 }
 
-/// Abstraction of ML-DSA functionality.
-pub trait MlDsa: Send {
-    /// Generate an ML-DSA key.  Key generation parameters are passed in for reference, to allow for
-    /// implementations that might have parameter-specific behaviour.
-    fn generate_key(
-        &self,
-        rng: &mut dyn Rng,
-        variant: MlDsaVariant,
-        _params: &[keymint::KeyParam],
-    ) -> Result<KeyMaterial, Error> {
-        let mut key = [0; mldsa::SEED_SIZE];
-        rng.fill_bytes(&mut key[..]);
-        let key = match variant {
-            MlDsaVariant::MlDsa65 => mldsa::Key::MlDsa65(key),
-            MlDsaVariant::MlDsa87 => mldsa::Key::MlDsa87(key),
-        };
-        Ok(KeyMaterial::MlDsa(variant, key.into()))
-    }
-
-    /// Import an ML-DSA key in raw format.  Key import parameters are passed in for reference, to
-    /// allow for implementations that might have parameter-specific behaviour.
-    fn import_raw_key(
-        &self,
-        data: &[u8],
-        variant: MlDsaVariant,
-        _params: &[keymint::KeyParam],
-    ) -> Result<KeyMaterial, Error> {
-        mldsa::import_raw_key(data, variant)
-    }
-
-    /// Return the public key data that corresponds to the provided private `key`, as
-    /// the bytes of the public key.
-    fn subject_public_key(&self, key: &OpaqueOr<mldsa::Key>) -> Result<Vec<u8>, Error>;
-
-    /// Create an ML-DSA signing operation.
-    fn begin_sign(
-        &self,
-        key: OpaqueOr<mldsa::Key>,
-    ) -> Result<Box<dyn AccumulatingOperation>, Error>;
-}
-
 /// Abstraction of an in-progress operation that emits data as it progresses.
 pub trait EmittingOperation: Send {
     /// Update operation with data.
@@ -741,21 +697,6 @@ impl Ec for NoOpEc {
         &self,
         _key: OpaqueOr<ec::Key>,
         _digest: Digest,
-    ) -> Result<Box<dyn AccumulatingOperation>, Error> {
-        unimpl!();
-    }
-}
-
-/// Stub implementation of [`MlDsa`].
-pub struct NoOpMlDsa;
-impl MlDsa for NoOpMlDsa {
-    fn subject_public_key(&self, _key: &OpaqueOr<mldsa::Key>) -> Result<Vec<u8>, Error> {
-        unimpl!();
-    }
-
-    fn begin_sign(
-        &self,
-        _key: OpaqueOr<mldsa::Key>,
     ) -> Result<Box<dyn AccumulatingOperation>, Error> {
         unimpl!();
     }

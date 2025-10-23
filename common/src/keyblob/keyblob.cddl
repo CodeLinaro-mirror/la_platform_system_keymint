@@ -50,8 +50,6 @@ KeyMaterial = &(
   ; `ECPrivateKey` structure, as specified by RFC 5915 section 3.
   ; An explicit EC key for curve 25519 is the raw key bytes.
   [3, bool, [EcCurve, CurveType, bstr]], ; Algorithm_Ec
-  ; An explicit ML-DSA key is the 32-byte seed value.
-  [4, bool, [MlDsaVariant, bstr]], ; Algorithm_MlDsa
 )
 SecureDeletionSlot = int
 SecureDeletionData = [

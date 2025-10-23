@@ -50,7 +50,6 @@ pub(crate) enum CryptoOperation {
     RsaSign(Box<dyn AccumulatingOperation>),
     EcAgree(Box<dyn AccumulatingOperation>),
     EcSign(Box<dyn AccumulatingOperation>),
-    MlDsaSign(Box<dyn AccumulatingOperation>),
 }
 
 /// Current state of an operation.
@@ -414,23 +413,6 @@ impl crate::KeyMintTa {
                     }
                 },
             },
-            KeyMaterial::MlDsa(_variant, key) => Operation {
-                handle: op_handle,
-                aad_allowed: false,
-                input_size: 0,
-                slot_to_delete,
-                trusted_conf_data,
-                auth_info: op_auth_info,
-                crypto_op: match purpose {
-                    KeyPurpose::Sign => CryptoOperation::MlDsaSign(self.imp.mldsa.begin_sign(key)?),
-                    _ => {
-                        return Err(km_err!(
-                            IncompatiblePurpose,
-                            "invalid purpose {purpose:?} for ML-DSA key",
-                        ))
-                    }
-                },
-            },
         };
         self.operations[op_idx] = Some(op);
         if presence_required {
@@ -515,10 +497,6 @@ impl crate::KeyMintTa {
                     Ok(Vec::new())
                 }
                 CryptoOperation::EcSign(op) => {
-                    op.update(data)?;
-                    Ok(Vec::new())
-                }
-                CryptoOperation::MlDsaSign(op) => {
                     op.update(data)?;
                     Ok(Vec::new())
                 }
@@ -627,12 +605,6 @@ impl crate::KeyMintTa {
                 op.finish()
             }
             CryptoOperation::EcSign(mut op) => {
-                if let Some(data) = data {
-                    op.update(data)?;
-                };
-                op.finish()
-            }
-            CryptoOperation::MlDsaSign(mut op) => {
                 if let Some(data) = data {
                     op.update(data)?;
                 };

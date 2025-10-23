@@ -237,11 +237,6 @@ impl crate::KeyMintTa {
                 op.update(tbs_data)?;
                 op.finish()
             }
-            KeyMaterial::MlDsa(_variant, key) => {
-                let mut op = self.imp.mldsa.begin_sign(key)?;
-                op.update(tbs_data)?;
-                op.finish()
-            }
             _ => Err(km_err!(IncompatibleAlgorithm, "unexpected cert signing key type")),
         }
     }
@@ -316,9 +311,6 @@ impl crate::KeyMintTa {
             crypto::KeyGenInfo::X25519 => {
                 self.imp.ec.generate_x25519_key(&mut *self.imp.rng, params)?
             }
-            crypto::KeyGenInfo::MlDsa(variant) => {
-                self.imp.mldsa.generate_key(&mut *self.imp.rng, variant, params)?
-            }
         };
         Ok((key_material, chars))
     }
@@ -386,7 +378,6 @@ impl crate::KeyMintTa {
             &mut Vec::<u8>::new(),
             &*self.imp.ec,
             &*self.imp.rsa,
-            &*self.imp.mldsa,
         )? {
             // Asymmetric keys return the public key inside an X.509 certificate.
             // Need to determine:
