@@ -65,8 +65,7 @@ mod tests;
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]
 pub enum KeyMintHalVersion {
-    /// V5 removes support for destroying attestation IDs, and adds support for ML-DSA and IMEI
-    /// reordering.
+    /// V5 removes support for destroying attestation IDs.
     V5 = 500,
     /// V4 adds support for attestation of module information.
     V4 = 400,
@@ -79,7 +78,7 @@ pub enum KeyMintHalVersion {
 }
 
 /// Version code for current KeyMint.
-pub const KEYMINT_CURRENT_VERSION: KeyMintHalVersion = KeyMintHalVersion::V5;
+pub const KEYMINT_CURRENT_VERSION: KeyMintHalVersion = KeyMintHalVersion::V4;
 
 /// Maximum number of parallel operations supported when running as TEE.
 const MAX_TEE_OPERATIONS: usize = 16;

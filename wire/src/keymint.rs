@@ -131,7 +131,6 @@ impl AsCborValue for DateTime {
 pub enum Algorithm {
     Rsa = 1,
     Ec = 3,
-    MlDsa = 4,
     Aes = 32,
     TripleDes = 33,
     Hmac = 128,
@@ -183,15 +182,6 @@ pub enum EcCurve {
     Curve25519 = 4, // Only for >= v2 of the HAL
 }
 try_from_n!(EcCurve);
-
-// Only for >= v5 of the HAL
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, AsCborValue, N)]
-#[repr(i32)]
-pub enum MlDsaVariant {
-    MlDsa65 = 1,
-    MlDsa87 = 2,
-}
-try_from_n!(MlDsaVariant);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, AsCborValue, N)]
 #[repr(i32)]
@@ -281,7 +271,6 @@ pub enum ErrorCode {
     BootLevelExceeded = -84,
     HardwareNotYetAvailable = -85,
     ModuleHashAlreadySet = -86,
-    UnsupportedMlDsaVariant = -87,
     Unimplemented = -100,
     VersionMismatch = -101,
     UnknownError = -1000,
@@ -365,7 +354,6 @@ pub enum KeyParam {
     CallerNonce,
     MinMacLength(u32),
     EcCurve(EcCurve),
-    MlDsaVariant(MlDsaVariant), // Only for >= v5 of the HAL
     RsaPublicExponent(RsaExponent),
     IncludeUniqueId,
     RsaOaepMgfDigest(Digest),
@@ -427,7 +415,6 @@ impl KeyParam {
             KeyParam::Padding(_) => Tag::Padding,
             KeyParam::Digest(_) => Tag::Digest,
             KeyParam::EcCurve(_) => Tag::EcCurve,
-            KeyParam::MlDsaVariant(_) => Tag::MlDsaVariant, // Only for >= v5 of the HAL
             KeyParam::Origin(_) => Tag::Origin,
             KeyParam::Purpose(_) => Tag::Purpose,
             KeyParam::KeySize(_) => Tag::KeySize,
@@ -466,7 +453,7 @@ impl KeyParam {
             KeyParam::AttestationIdProduct(_) => Tag::AttestationIdProduct,
             KeyParam::AttestationIdSerial(_) => Tag::AttestationIdSerial,
             KeyParam::AttestationIdImei(_) => Tag::AttestationIdImei,
-            KeyParam::AttestationIdSecondImei(_) => Tag::AttestationIdSecondImei, // Only for >= v3 of the HAL
+            KeyParam::AttestationIdSecondImei(_) => Tag::AttestationIdSecondImei,
             KeyParam::AttestationIdMeid(_) => Tag::AttestationIdMeid,
             KeyParam::AttestationIdManufacturer(_) => Tag::AttestationIdManufacturer,
             KeyParam::AttestationIdModel(_) => Tag::AttestationIdModel,
@@ -482,7 +469,7 @@ impl KeyParam {
             KeyParam::CertificateNotBefore(_) => Tag::CertificateNotBefore,
             KeyParam::CertificateNotAfter(_) => Tag::CertificateNotAfter,
             KeyParam::MaxBootLevel(_) => Tag::MaxBootLevel,
-            KeyParam::ModuleHash(_) => Tag::ModuleHash, // Only for >= v4 of the HAL
+            KeyParam::ModuleHash(_) => Tag::ModuleHash,
         }
     }
 }
@@ -518,7 +505,6 @@ impl crate::AsCborValue for KeyParam {
             Tag::Padding => KeyParam::Padding(<PaddingMode>::from_cbor_value(raw)?),
             Tag::Digest => KeyParam::Digest(<Digest>::from_cbor_value(raw)?),
             Tag::EcCurve => KeyParam::EcCurve(<EcCurve>::from_cbor_value(raw)?),
-            Tag::MlDsaVariant => KeyParam::MlDsaVariant(<MlDsaVariant>::from_cbor_value(raw)?),
             Tag::Origin => KeyParam::Origin(<KeyOrigin>::from_cbor_value(raw)?),
             Tag::Purpose => KeyParam::Purpose(<KeyPurpose>::from_cbor_value(raw)?),
             Tag::KeySize => KeyParam::KeySize(<KeySizeInBits>::from_cbor_value(raw)?),
@@ -645,7 +631,6 @@ impl crate::AsCborValue for KeyParam {
             KeyParam::Padding(v) => (Tag::Padding, v.to_cbor_value()?),
             KeyParam::Digest(v) => (Tag::Digest, v.to_cbor_value()?),
             KeyParam::EcCurve(v) => (Tag::EcCurve, v.to_cbor_value()?),
-            KeyParam::MlDsaVariant(v) => (Tag::MlDsaVariant, v.to_cbor_value()?),
             KeyParam::Origin(v) => (Tag::Origin, v.to_cbor_value()?),
             KeyParam::Purpose(v) => (Tag::Purpose, v.to_cbor_value()?),
             KeyParam::KeySize(v) => (Tag::KeySize, v.to_cbor_value()?),
@@ -751,12 +736,6 @@ impl crate::AsCborValue for KeyParam {
             Tag::EcCurve as i32,
             EcCurve::cddl_ref(),
             "Tag_EcCurve",
-        );
-        result += &format!(
-            "    [{}, {}], ; {}\n",
-            Tag::MlDsaVariant as i32,
-            MlDsaVariant::cddl_ref(),
-            "Tag_MlDsaVariant",
         );
         result += &format!(
             "    [{}, {}], ; {}\n",
@@ -1155,7 +1134,6 @@ pub enum Tag {
     CallerNonce = 1879048199,
     MinMacLength = 805306376,
     EcCurve = 268435466,
-    MlDsaVariant = 268435467, // Only in >= v5 of the HAL
     RsaPublicExponent = 1342177480,
     IncludeUniqueId = 1879048394,
     RsaOaepMgfDigest = 536871115,

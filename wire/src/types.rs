@@ -56,7 +56,6 @@ pub enum ValueNotRecognized {
     HardwareAuthenticatorType,
     KeyFormat,
     KeyOrigin,
-    MlDsaVariant,
     SecurityLevel,
     Tag,
     TagType,

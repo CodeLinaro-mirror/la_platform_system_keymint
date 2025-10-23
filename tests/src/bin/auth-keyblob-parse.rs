@@ -138,7 +138,6 @@ fn process(filename: &str, hex: bool) {
             }
         }
         Algorithm::Rsa => KeyMaterial::Rsa(rsa::Key(raw_key).into()),
-        Algorithm::MlDsa => panic!("ML-DSA unsupported"),
     };
 
     // Test the `tag::extract_key_characteristics()` entrypoint by comparing what it

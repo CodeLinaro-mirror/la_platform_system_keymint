@@ -275,7 +275,6 @@ pub fn extract_key_gen_characteristics(
     let keygen_info = match get_algorithm(params)? {
         Algorithm::Rsa => check_rsa_gen_params(params, sec_level),
         Algorithm::Ec => check_ec_gen_params(params, sec_level),
-        Algorithm::MlDsa => todo!(),
         Algorithm::Aes => check_aes_gen_params(params, sec_level),
         Algorithm::TripleDes => check_3des_gen_params(params),
         Algorithm::Hmac => check_hmac_gen_params(params, sec_level),
@@ -298,7 +297,6 @@ pub fn extract_key_import_characteristics(
             check_rsa_import_params(&*imp.rsa, params, sec_level, key_format, key_data)
         }
         Algorithm::Ec => check_ec_import_params(&*imp.ec, params, sec_level, key_format, key_data),
-        Algorithm::MlDsa => todo!(),
         Algorithm::Aes => {
             check_aes_import_params(&*imp.aes, params, sec_level, key_format, key_data)
         }
@@ -995,7 +993,6 @@ pub fn check_begin_params(
     let check = match algo {
         Algorithm::Rsa => check_begin_rsa_params(chars, purpose, params),
         Algorithm::Ec => check_begin_ec_params(chars, purpose, params),
-        Algorithm::MlDsa => todo!(),
         Algorithm::Aes => check_begin_aes_params(chars, params, nonce.map(|v| v.as_ref())),
         Algorithm::TripleDes => check_begin_3des_params(params, nonce.map(|v| v.as_ref())),
         Algorithm::Hmac => check_begin_hmac_params(chars, purpose, params),
