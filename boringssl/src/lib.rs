@@ -17,8 +17,9 @@
 
 extern crate alloc;
 
+use alloc::boxed::Box;
 use alloc::string::ToString;
-use kmr_common::{Error, ErrorKind};
+use kmr_common::{crypto, Error, ErrorKind};
 use kmr_wire::keymint::{Digest, ErrorCode};
 use log::error;
 use openssl::hash::MessageDigest;
@@ -47,6 +48,28 @@ use err::*;
 mod tests;
 
 mod types;
+
+/// Return a collection of BoringSSL-backed cryptographic trait implementations (together
+/// with the provided RNG and clock implementations).
+#[cfg(soong)]
+pub fn implementation(
+    rng: Box<dyn crypto::Rng>,
+    clock: Box<dyn crypto::MonotonicClock>,
+) -> crypto::Implementation {
+    crypto::Implementation {
+        rng,
+        clock: Some(clock),
+        compare: Box::new(eq::BoringEq),
+        aes: Box::new(aes::BoringAes),
+        des: Box::new(des::BoringDes),
+        hmac: Box::new(hmac::BoringHmac),
+        rsa: Box::<rsa::BoringRsa>::default(),
+        ec: Box::<ec::BoringEc>::default(),
+        ckdf: Box::new(aes_cmac::BoringAesCmac),
+        hkdf: Box::new(hmac::BoringHmac),
+        sha256: Box::new(sha256::BoringSha256),
+    }
+}
 
 /// Map an OpenSSL `ErrorStack` into a KeyMint [`ErrorCode`] value.
 pub(crate) fn map_openssl_errstack(errs: &openssl::error::ErrorStack) -> ErrorCode {
