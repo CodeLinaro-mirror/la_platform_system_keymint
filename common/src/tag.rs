@@ -23,7 +23,8 @@ use alloc::vec::Vec;
 use kmr_wire::{
     keymint::{
         Algorithm, BlockMode, Digest, EcCurve, ErrorCode, KeyCharacteristics, KeyFormat, KeyParam,
-        KeyPurpose, PaddingMode, SecurityLevel, Tag, DEFAULT_CERT_SERIAL, DEFAULT_CERT_SUBJECT,
+        KeyPurpose, MlDsaVariant, PaddingMode, SecurityLevel, Tag, DEFAULT_CERT_SERIAL,
+        DEFAULT_CERT_SUBJECT,
     },
     KeySizeInBits,
 };
@@ -205,6 +206,11 @@ pub fn get_ec_curve(params: &[KeyParam]) -> Result<EcCurve, Error> {
     get_tag_value!(params, EcCurve, ErrorCode::UnsupportedKeySize)
 }
 
+/// Get the configured ML-DSA variant from a set of parameters.
+pub fn get_mldsa_variant(params: &[KeyParam]) -> Result<MlDsaVariant, Error> {
+    get_tag_value!(params, MlDsaVariant, ErrorCode::UnsupportedMlDsaVariant)
+}
+
 /// Get the configured MGF digest from a set of parameters.  If no MGF digest is specified,
 /// a default value of SHA1 is returned.
 pub fn get_mgf_digest(params: &[KeyParam]) -> Result<Digest, Error> {
@@ -275,7 +281,7 @@ pub fn extract_key_gen_characteristics(
     let keygen_info = match get_algorithm(params)? {
         Algorithm::Rsa => check_rsa_gen_params(params, sec_level),
         Algorithm::Ec => check_ec_gen_params(params, sec_level),
-        Algorithm::MlDsa => todo!(),
+        Algorithm::MlDsa => check_mldsa_gen_params(params, sec_level),
         Algorithm::Aes => check_aes_gen_params(params, sec_level),
         Algorithm::TripleDes => check_3des_gen_params(params),
         Algorithm::Hmac => check_hmac_gen_params(params, sec_level),
@@ -298,7 +304,9 @@ pub fn extract_key_import_characteristics(
             check_rsa_import_params(&*imp.rsa, params, sec_level, key_format, key_data)
         }
         Algorithm::Ec => check_ec_import_params(&*imp.ec, params, sec_level, key_format, key_data),
-        Algorithm::MlDsa => todo!(),
+        Algorithm::MlDsa => {
+            check_mldsa_import_params(&*imp.mldsa, params, sec_level, key_format, key_data)
+        }
         Algorithm::Aes => {
             check_aes_import_params(&*imp.aes, params, sec_level, key_format, key_data)
         }
@@ -513,6 +521,21 @@ fn check_ec_gen_params(params: &[KeyParam], sec_level: SecurityLevel) -> Result<
     Ok(keygen_info)
 }
 
+/// Check ML-DSA key generation parameter validity.
+fn check_mldsa_gen_params(
+    params: &[KeyParam],
+    sec_level: SecurityLevel,
+) -> Result<KeyGenInfo, Error> {
+    // For key generation, the variant must be explicitly specified.
+    let variant = get_mldsa_variant(params)?;
+
+    let purpose = check_mldsa_params(params, sec_level)?;
+    if !matches!(purpose, Some(KeyPurpose::Sign) | Some(KeyPurpose::AttestKey)) {
+        return Err(km_err!(IncompatiblePurpose, "ML-DSA key with invalid purpose {purpose:?}"));
+    }
+    Ok(KeyGenInfo::MlDsa(variant))
+}
+
 /// Find the first purpose value in the parameters.
 pub fn primary_purpose(params: &[KeyParam]) -> Result<KeyPurpose, Error> {
     params
@@ -681,6 +704,67 @@ fn check_ec_params(
         return Err(km_err!(
             IncompatiblePurpose,
             "curve25519 keys must be either SIGN/ATTEST_KEY or AGREE_KEY, not both"
+        ));
+    }
+
+    Ok(primary_purpose)
+}
+
+/// Check ML-DSA key import parameter validity. Return the key material along with any key generation
+/// parameters that have been deduced from the key material (but which are not present in the input
+/// key parameters).
+fn check_mldsa_import_params(
+    mldsa: &dyn MlDsa,
+    params: &[KeyParam],
+    sec_level: SecurityLevel,
+    key_format: KeyFormat,
+    key_data: &[u8],
+) -> Result<(Vec<KeyParam>, KeyMaterial), Error> {
+    if key_format != KeyFormat::Raw {
+        return Err(km_err!(
+            UnsupportedKeyFormat,
+            "unsupported import format {key_format:?}, expect RAW",
+        ));
+    }
+    let variant = get_opt_tag_value!(params, MlDsaVariant)?
+        .ok_or_else(|| km_err!(InvalidArgument, "missing MlDsaVariant"))?;
+    let key = mldsa.import_raw_key(key_data, *variant, params)?;
+
+    check_mldsa_params(params, sec_level)?;
+    Ok((Vec::new(), key))
+}
+
+/// Check the parameter validity for an ML-DSA key that is about to be generated or imported.
+fn check_mldsa_params(
+    params: &[KeyParam],
+    sec_level: SecurityLevel,
+) -> Result<Option<KeyPurpose>, Error> {
+    if sec_level == SecurityLevel::Strongbox {
+        return Err(km_err!(UnsupportedAlgorithm, "ML-DSA not supported for StrongBox"));
+    }
+
+    let mut seen_attest = false;
+    let mut seen_sign = false;
+    let mut primary_purpose = None;
+    for param in params {
+        if let KeyParam::Purpose(purpose) = param {
+            match purpose {
+                KeyPurpose::Sign => seen_sign = true,
+                KeyPurpose::AttestKey => seen_attest = true,
+                KeyPurpose::Verify => {}
+                _ => warn!("Generating ML-DSA key with invalid purpose {purpose:?}"),
+            }
+            if primary_purpose.is_none() {
+                primary_purpose = Some(*purpose);
+            }
+        }
+    }
+
+    // Keys with Purpose::ATTEST_KEY must have no other purpose.
+    if seen_attest && seen_sign {
+        return Err(km_err!(
+            IncompatiblePurpose,
+            "keys with ATTEST_KEY must have no other purpose"
         ));
     }
 
@@ -965,6 +1049,8 @@ pub fn check_begin_params(
             | (Algorithm::Rsa, KeyPurpose::Sign)
             | (Algorithm::Rsa, KeyPurpose::Decrypt)
             | (Algorithm::Rsa, KeyPurpose::AttestKey)
+            | (Algorithm::MlDsa, KeyPurpose::Sign)
+            | (Algorithm::MlDsa, KeyPurpose::AttestKey)
     );
     if !valid_purpose {
         return Err(km_err!(
@@ -995,7 +1081,7 @@ pub fn check_begin_params(
     let check = match algo {
         Algorithm::Rsa => check_begin_rsa_params(chars, purpose, params),
         Algorithm::Ec => check_begin_ec_params(chars, purpose, params),
-        Algorithm::MlDsa => todo!(),
+        Algorithm::MlDsa => check_begin_mldsa_params(purpose, params),
         Algorithm::Aes => check_begin_aes_params(chars, params, nonce.map(|v| v.as_ref())),
         Algorithm::TripleDes => check_begin_3des_params(params, nonce.map(|v| v.as_ref())),
         Algorithm::Hmac => check_begin_hmac_params(chars, purpose, params),
@@ -1168,6 +1254,20 @@ fn check_begin_ec_params(
                 "Ed25519 only supports Digest::None not {:?}",
                 digest
             ));
+        }
+    }
+    Ok(BeginParamsToCheck { block_mode: false, padding: false, digest: true, mgf_digest: false })
+}
+
+/// Check that an ML-DSA operation with the given `purpose` and `params` can validly be started.
+fn check_begin_mldsa_params(
+    purpose: KeyPurpose,
+    params: &[KeyParam],
+) -> Result<BeginParamsToCheck, Error> {
+    if purpose == KeyPurpose::Sign {
+        let digest = get_digest(params)?;
+        if digest != Digest::None {
+            return Err(km_err!(UnsupportedDigest, "{digest:?} unsupported for ML-DSA signing"));
         }
     }
     Ok(BeginParamsToCheck { block_mode: false, padding: false, digest: true, mgf_digest: false })
