@@ -48,39 +48,9 @@ rust_library {
         // to SystemServer are merged.  b/443860298.
         // "disable_attestation_when_frp_active",
     ],
-}
-
-rust_library_rlib {
-    name: "libkmr_ta_nostd",
-    crate_name: "kmr_ta",
-    srcs: ["src/lib.rs"],
-    edition: "2021",
-    lints: "android",
-    vendor_available: true,
-    rustlibs: [
-        "libciborium_nostd",
-        "libciborium_io_nostd",
-        "libcoset_nostd",
-        "libder_nostd",
-        "libflagset_nostd",
-        "libkmr_common_nostd",
-        "libkmr_wire_nostd",
-        "liblog_rust_nostd",
-        "libspki_nostd",
-        "libx509_cert_nostd",
-    ],
-    proc_macros: [
-        "libkmr_derive",
-    ],
-    prefer_rlib: true,
-    no_stdlibs: true,
-    stdlibs: [
-        "libcompiler_builtins.rust_sysroot",
-        "libcore.rust_sysroot",
-    ],
-    // Disabling FRP if the bootloader is unlocked provides a convenient way for OEMs to bypass
-    // FRP, but may allow attackers to bypass it if bootloader unlocking is not well-secured.
-    features: ["disable_frp_if_bootloader_unlocked"],
+    no_std: {
+        enabled: true,
+    },
 }
 
 rust_test {
