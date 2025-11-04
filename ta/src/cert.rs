@@ -86,7 +86,7 @@ pub(crate) fn tbs_certificate<'a>(
     // - RSA: RFC 4055 section 5 requires `NULL` parameters.
     // - ECDSA: RFC 5758 section 3.2 requires parameters be omitted.
     // - EdDSA: RFC 8410 section 3 requires parameters be omitted.
-    // - ML-DSA: draft-ietf-lamps-dilithium-certificates-12 section 2 requires parameters be omitted.
+    // - ML-DSA: RFC 9881 section 2 requires parameters be omitted.
     let (sig_alg_oid, parameters) = match info {
         Some(info) => match info.signing_key {
             KeyMaterial::Rsa(_) => (crypto::rsa::SHA256_PKCS1_SIGNATURE_OID, Some(Any::null())),
