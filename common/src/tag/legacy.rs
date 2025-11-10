@@ -21,7 +21,7 @@ use core::convert::{TryFrom, TryInto};
 use kmr_wire::{
     keymint::{
         Algorithm, BlockMode, DateTime, Digest, EcCurve, KeyOrigin, KeyParam, KeyPurpose,
-        PaddingMode, Tag,
+        MlDsaVariant, PaddingMode, Tag,
     },
     KeySizeInBits, RsaExponent,
 };
@@ -179,6 +179,9 @@ pub fn serialize(params: &[KeyParam]) -> Result<Vec<u8>, Error> {
                 result.try_extend_from_slice(&(*v as u32).to_ne_bytes())?
             }
             KeyParam::Origin(v) => result.try_extend_from_slice(&(*v as u32).to_ne_bytes())?,
+            KeyParam::MlDsaVariant(v) => {
+                result.try_extend_from_slice(&(*v as u32).to_ne_bytes())?
+            }
 
             // `u32`-holding variants.
             KeyParam::KeySize(v) => result.try_extend_from_slice(&(v.0).to_ne_bytes())?,
@@ -353,6 +356,9 @@ pub fn deserialize(data: &mut &[u8]) -> Result<Vec<KeyParam>, Error> {
             Tag::Origin => {
                 KeyParam::Origin(<KeyOrigin>::try_from(consume_i32(data)?).map_err(enum_err)?)
             }
+            Tag::MlDsaVariant => KeyParam::MlDsaVariant(
+                <MlDsaVariant>::try_from(consume_i32(data)?).map_err(enum_err)?,
+            ),
 
             // `u32`-holding variants.
             Tag::KeySize => KeyParam::KeySize(KeySizeInBits(consume_u32(data)?)),
