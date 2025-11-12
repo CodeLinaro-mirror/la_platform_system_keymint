@@ -720,18 +720,49 @@ fn check_mldsa_import_params(
     key_format: KeyFormat,
     key_data: &[u8],
 ) -> Result<(Vec<KeyParam>, KeyMaterial), Error> {
-    if key_format != KeyFormat::Raw {
-        return Err(km_err!(
-            UnsupportedKeyFormat,
-            "unsupported import format {key_format:?}, expect RAW",
-        ));
-    }
-    let variant = get_opt_tag_value!(params, MlDsaVariant)?
-        .ok_or_else(|| km_err!(InvalidArgument, "missing MlDsaVariant"))?;
-    let key = mldsa.import_raw_key(key_data, *variant, params)?;
+    let specified_variant = get_opt_tag_value!(params, MlDsaVariant)?;
+    let mut deduced_chars = Vec::new();
+    let key = match key_format {
+        KeyFormat::Raw => {
+            let Some(variant) = specified_variant else {
+                // Raw key material needs an explicitly specified variant.
+                return Err(km_err!(InvalidArgument, "missing MlDsaVariant"));
+            };
+            mldsa.import_raw_key(key_data, *variant, params)?
+        }
+        KeyFormat::Pkcs8 => {
+            let key = mldsa.import_pkcs8_key(key_data, params)?;
+            let actual_variant = match &key {
+                KeyMaterial::MlDsa(MlDsaVariant::MlDsa65, _) => MlDsaVariant::MlDsa65,
+                KeyMaterial::MlDsa(MlDsaVariant::MlDsa87, _) => MlDsaVariant::MlDsa87,
+                _ => {
+                    return Err(km_err!(
+                        ImportParameterMismatch,
+                        "unexpected key type from ML-DSA import"
+                    ))
+                }
+            };
+            // If the ML-DSA variant was explicitly specified, it must match.
+            if let Some(specified_variant) = specified_variant {
+                if *specified_variant != actual_variant {
+                    return Err(km_err!(ImportParameterMismatch,
+                                       "imported ML-DSA key claimed {specified_variant:?} but is {actual_variant:?}"));
+                }
+            }
+            // The variant must be populated in the key characteristics.
+            deduced_chars.try_push(KeyParam::MlDsaVariant(actual_variant))?;
+            key
+        }
+        _ => {
+            return Err(km_err!(
+                UnsupportedKeyFormat,
+                "unsupported import format {key_format:?}, expect RAW or PKCS8",
+            ));
+        }
+    };
 
     check_mldsa_params(params, sec_level)?;
-    Ok((Vec::new(), key))
+    Ok((deduced_chars, key))
 }
 
 /// Check the parameter validity for an ML-DSA key that is about to be generated or imported.

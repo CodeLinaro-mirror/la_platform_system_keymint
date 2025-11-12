@@ -23,6 +23,9 @@ use der::asn1::BitStringRef;
 use kmr_wire::keymint::MlDsaVariant;
 use spki::{AlgorithmIdentifier, SubjectPublicKeyInfo, SubjectPublicKeyInfoRef};
 
+#[cfg(test)]
+mod tests;
+
 /// OID value for ML-DSA-65; see RFC 9881 s2.
 pub const OID_65: pkcs8::ObjectIdentifier =
     pkcs8::ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.3.18");
@@ -116,4 +119,54 @@ pub fn import_raw_key(data: &[u8], variant: MlDsaVariant) -> Result<KeyMaterial,
         MlDsaVariant::MlDsa87 => Key::MlDsa87(seed),
     };
     Ok(KeyMaterial::MlDsa(variant, OpaqueOr::Explicit(key)))
+}
+
+// ML-DSA-65 PKCS#8 private key seed prefix.
+const PKCS8_SEED_65_PREFIX: [u8; 22] = [
+    0x30, 0x34, // SEQUENCE len x34 {
+    0x02, 0x01, 0x00, // INTEGER 0 (Version)
+    0x30, 0x0b, // SEQUENCE len 11 (privateKeyAlgorithm) {
+    0x06, 0x09, // OBJECT_IDENTIFIER len 9
+    0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x03, 0x12, //  2.16.840.1.101.3.4.3.18
+    // }
+    0x04, 0x22, // OCTET STRING len 34
+    0x80, 0x20, // tag 0 primitive len 32
+          // followed by 32 bytes of seed data
+];
+
+// ML-DSA-87 PKCS#8 private key seed prefix.
+const PKCS8_SEED_87_PREFIX: [u8; 22] = [
+    0x30, 0x34, // SEQUENCE len x34 {
+    0x02, 0x01, 0x00, // INTEGER 0 (Version)
+    0x30, 0x0b, // SEQUENCE len 11 (privateKeyAlgorithm) {
+    0x06, 0x09, // OBJECT_IDENTIFIER len 9
+    0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x03, 0x13, //  2.16.840.1.101.3.4.3.19
+    // }
+    0x04, 0x22, // OCTET STRING len 34
+    0x80, 0x20, // tag 0 primitive len 32
+          // followed by 32 bytes of seed data
+];
+
+/// Import an ML-DSA key in PKCS#8 format.  Only the `seed` version of the `CHOICE` is supported.
+pub fn import_pkcs8_key(data: &[u8]) -> Result<KeyMaterial, Error> {
+    // The PKCS#8 private key format in RFC 9881 section 6 includes an ASN.1 `CHOICE` with three
+    // possibilities: seed, expandedKey, or both.
+    //
+    // We only support the seed format, and as the inner seed has a fixed length (32-bytes) there is
+    // no need to do ASN.1 parsing; we can just check for the expected length and prefix.
+    if data.len() == PKCS8_SEED_65_PREFIX.len() + SEED_SIZE
+        && data[..PKCS8_SEED_65_PREFIX.len()] == PKCS8_SEED_65_PREFIX
+    {
+        let seed = <[u8; SEED_SIZE]>::try_from(&data[PKCS8_SEED_65_PREFIX.len()..])
+            .map_err(|_e| km_err!(UnsupportedKeySize, "ML-DSA key seeds must be 32 bytes"))?;
+        Ok(KeyMaterial::MlDsa(MlDsaVariant::MlDsa65, OpaqueOr::Explicit(Key::MlDsa65(seed))))
+    } else if data.len() == PKCS8_SEED_87_PREFIX.len() + SEED_SIZE
+        && data[..PKCS8_SEED_87_PREFIX.len()] == PKCS8_SEED_87_PREFIX
+    {
+        let seed = <[u8; SEED_SIZE]>::try_from(&data[PKCS8_SEED_87_PREFIX.len()..])
+            .map_err(|_e| km_err!(UnsupportedKeySize, "ML-DSA key seeds must be 32 bytes"))?;
+        Ok(KeyMaterial::MlDsa(MlDsaVariant::MlDsa87, OpaqueOr::Explicit(Key::MlDsa87(seed))))
+    } else {
+        Err(km_err!(InvalidArgument, "PKCS#8 ML-DSA seed data not recognized"))
+    }
 }
