@@ -192,7 +192,7 @@ features or provisioned information, in the form of implementations of the vario
 - [ ] Root key(s) retrieval implementation: `RetrieveKeyMaterial`.
 - [ ] Attestation key / chain retrieval implementation (optional): `RetrieveCertSigningInfo`.
 - [ ] Attestation device ID retrieval implementation: `RetrieveAttestationIds`.
-- [ ] Retrieval of BCC and DICE artefacts: `RetrieveRpcArtefacts`.
+- [ ] Retrieval of BCC and DICE artefacts: `RetrieveRpcArtifacts`.
 - [ ] Secure secret storage (for rollback-resistant keys) implementation (optional): `SecureDeletionSecretManager`.
 - [ ] Bootloader status retrieval (optional): `BootloaderStatus`.
 - [ ] Storage key wrapping integration (optional): `StorageKeyWrapper`.
