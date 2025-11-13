@@ -23,11 +23,11 @@ use der::asn1::BitStringRef;
 use kmr_wire::keymint::MlDsaVariant;
 use spki::{AlgorithmIdentifier, SubjectPublicKeyInfo, SubjectPublicKeyInfoRef};
 
-/// OID value for ML-DSA-65; see draft-ietf-lamps-dilithium-certificates-12 s2.
+/// OID value for ML-DSA-65; see RFC 9881 s2.
 pub const OID_65: pkcs8::ObjectIdentifier =
     pkcs8::ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.3.18");
 
-/// OID value for ML-DSA-87; see draft-ietf-lamps-dilithium-certificates-12 s2.
+/// OID value for ML-DSA-87; see RFC 9881 s2.
 pub const OID_87: pkcs8::ObjectIdentifier =
     pkcs8::ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.3.19");
 
@@ -71,7 +71,7 @@ impl OpaqueOr<Key> {
     ///    parameters              ANY DEFINED BY algorithm OPTIONAL  }
     /// ```
     ///
-    /// The contents are described in draft-ietf-lamps-dilithium-certificates-12 s2 and s4.
+    /// The contents are described in RFC 9881 s2 and s4.
     /// - The `AlgorithmIdentifier` has an `algorithm` OID of 2.16.840.1.101.3.4.3.{18,19}.
     /// - The `parameters` "MUST be absent".
     /// - The `subjectPublicKey` contains the public key.
