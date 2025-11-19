@@ -249,7 +249,7 @@ where
             T::MAX_SIZE
         );
         return Err(binder::Status::new_service_specific_error(
-            ErrorCode::InvalidInputLength as i32,
+            ErrorCode::InvalidArgument as i32,
             Some(&CString::new("encoded request message too large").unwrap()),
         ));
     }
