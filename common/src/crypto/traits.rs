@@ -438,6 +438,16 @@ pub trait MlDsa: Send {
         mldsa::import_raw_key(data, variant)
     }
 
+    /// Import an ML-DSA key in PKCS#8 format.  Key import parameters are passed in for reference,
+    /// to allow for implementations that might have parameter-specific behaviour.
+    fn import_pkcs8_key(
+        &self,
+        data: &[u8],
+        _params: &[keymint::KeyParam],
+    ) -> Result<KeyMaterial, Error> {
+        mldsa::import_pkcs8_key(data)
+    }
+
     /// Return the public key data that corresponds to the provided private `key`, as
     /// the bytes of the public key.
     fn subject_public_key(&self, key: &OpaqueOr<mldsa::Key>) -> Result<Vec<u8>, Error>;
