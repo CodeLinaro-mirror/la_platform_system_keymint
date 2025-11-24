@@ -50,6 +50,9 @@ pub mod keymint;
 pub mod rpc;
 pub mod secureclock;
 pub mod sharedsecret;
+#[cfg(feature = "hal_v5")]
+pub mod timestamp;
+
 #[cfg(test)]
 mod tests;
 
@@ -67,6 +70,9 @@ pub enum Hal {
     #[cfg(feature = "hal_v5")]
     /// IFactoryResetProtection HAL.
     FactoryResetProtection,
+    #[cfg(feature = "hal_v5")]
+    /// ITimeStamper HAL.
+    TimeStamper,
 }
 
 impl fmt::Display for Hal {
@@ -83,6 +89,8 @@ impl fmt::Display for Hal {
             Self::FactoryResetProtection => {
                 "android.hardware.security.factory_reset_protection.IFactoryResetProtection"
             }
+            #[cfg(feature = "hal_v5")]
+            Self::TimeStamper => "android.hardware.security.timestamp.ITimeStamper",
         })
     }
 }
@@ -101,6 +109,8 @@ impl Hal {
             Hal::SharedSecret => sharedsecret::Device::new_as_binder(channel.clone()).as_binder(),
             #[cfg(feature = "hal_v5")]
             Hal::FactoryResetProtection => frp::Device::new_as_binder(channel.clone()).as_binder(),
+            #[cfg(feature = "hal_v5")]
+            Hal::TimeStamper => timestamp::Device::new_as_binder(channel.clone()),
         }
     }
 }
@@ -113,6 +123,8 @@ pub const ALL_HALS: &[Hal] = &[
     Hal::SharedSecret,
     #[cfg(feature = "hal_v5")]
     Hal::FactoryResetProtection,
+    #[cfg(feature = "hal_v5")]
+    Hal::TimeStamper,
 ];
 
 /// Emit a failure for a failed CBOR conversion.
@@ -405,11 +417,12 @@ pub fn register_binder_services<T: SerializedChannel + 'static>(
     for hal in hals_to_register {
         let service_name = format!("{hal}/{instance}");
 
-        // Since FRP is a new unfrozen HAL, we should only register it if it's declared.
-        // It will not be declared if `RELEASE_AIDL_USE_UNFROZEN` is false. See
+        // Since FRP and TimeStamper are new unfrozen HALs, we should only register them if they are declared.
+        // They will not be declared if `RELEASE_AIDL_USE_UNFROZEN` is false. See
         // https://source.android.com/docs/core/architecture/aidl/stable-aidl#new-vintf-interfaces.
-        // TODO(b/447887816): Remove the check for declaration once the interface is frozen.
-        if is_frp_hal(*hal)
+        // TODO(b/447887816): Remove the check for FRP declaration once the interface is frozen.
+        // TODO(b/455591722): Remove the check for TimeStamper declaration once the interface is frozen.
+        if is_unfrozen_hal(*hal)
             && !binder::is_declared(&service_name)
                 .map_err(|e| format!("Failed to check if {service_name} is declared: {e:?}"))?
         {
@@ -425,11 +438,11 @@ pub fn register_binder_services<T: SerializedChannel + 'static>(
 }
 
 #[cfg(not(feature = "hal_v5"))]
-fn is_frp_hal(_hal: Hal) -> bool {
+fn is_unfrozen_hal(_hal: Hal) -> bool {
     false
 }
 
 #[cfg(feature = "hal_v5")]
-fn is_frp_hal(hal: Hal) -> bool {
-    matches!(hal, Hal::FactoryResetProtection)
+fn is_unfrozen_hal(hal: Hal) -> bool {
+    matches!(hal, Hal::FactoryResetProtection | Hal::TimeStamper)
 }

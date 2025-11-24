@@ -57,6 +57,7 @@ rust_library {
     ],
     rustlibs: [
         "android.hardware.security.factory_reset_protection-V1-rust",
+        "android.hardware.security.timestamp-V1-rust",
     ],
 }
 
@@ -140,6 +141,7 @@ rust_test {
     ],
     rustlibs: [
         "android.hardware.security.factory_reset_protection-V1-rust",
+        "android.hardware.security.timestamp-V1-rust",
         "libkmr_wire",
     ],
     test_suites: ["general-tests"],

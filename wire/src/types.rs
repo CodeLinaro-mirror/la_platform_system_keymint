@@ -410,6 +410,17 @@ pub struct FrpDeleteAllDataRequest {}
 #[derive(Debug, AsCborValue)]
 pub struct FrpDeleteAllDataResponse {}
 
+// `ITimeStamper` methods.
+#[derive(Debug, AsCborValue)]
+pub struct TimeStampGenerateRequest {
+    pub encoded_req: Vec<u8>,
+}
+
+#[derive(Debug, AsCborValue)]
+pub struct TimeStampGenerateResponse {
+    pub timestamp_token: Vec<u8>,
+}
+
 // The following messages have no equivalent on a HAL interface, but are used internally
 // between components.
 
@@ -727,6 +738,7 @@ declare_req_rsp_enums! { KeyMintOperation  =>    (PerformOpReq, PerformOpRsp) {
     FrpRetrieveData = 0xA7 =>                          (FrpRetrieveDataRequest, FrpRetrieveDataResponse),
     FrpDeleteData = 0xA8 =>                            (FrpDeleteDataRequest, FrpDeleteDataResponse),
     FrpDeleteAllData = 0xA9 =>                         (FrpDeleteAllDataRequest, FrpDeleteAllDataResponse),
+    TimeStampGenerate = 0xB1 =>                        (TimeStampGenerateRequest, TimeStampGenerateResponse),
 } }
 
 /// Indicate whether an operation is part of the `IRemotelyProvisionedComponent` HAL.
