@@ -39,7 +39,6 @@ pub mod secureclock;
 pub mod sharedsecret;
 pub mod types;
 pub use types::*;
-pub mod frp;
 
 #[cfg(test)]
 mod tests;
