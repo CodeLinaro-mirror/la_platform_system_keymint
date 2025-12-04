@@ -39,6 +39,15 @@ rust_library {
     proc_macros: [
         "libkmr_derive",
     ],
+    features: [
+        // Disabling FRP if the bootloader is unlocked provides a convenient way for OEMs to bypass
+        // FRP, but may allow attackers to bypass it if bootloader unlocking is not well-secured.
+        "disable_frp_if_bootloader_unlocked",
+        // Disabling attestation when FRP is active provides some secure-world enforcement of FRP.
+        // It is presently commented out to avoid impacting operation until the necessary updates
+        // to SystemServer are merged.  b/443860298.
+        // "disable_attestation_when_frp_active",
+    ],
 }
 
 rust_library_rlib {
@@ -69,6 +78,9 @@ rust_library_rlib {
         "libcompiler_builtins.rust_sysroot",
         "libcore.rust_sysroot",
     ],
+    // Disabling FRP if the bootloader is unlocked provides a convenient way for OEMs to bypass
+    // FRP, but may allow attackers to bypass it if bootloader unlocking is not well-secured.
+    features: ["disable_frp_if_bootloader_unlocked"],
 }
 
 rust_test {

@@ -33,6 +33,7 @@ use kmr_common::{
 };
 use kmr_wire::{
     coset::TaggedCborSerializable,
+    frp::ErrorCode as FrpErrorCode,
     keymint::{
         Digest, ErrorCode, HardwareAuthToken, KeyCharacteristics, KeyMintHardwareInfo, KeyOrigin,
         KeyParam, SecurityLevel, Tag, VerifiedBootState, NEXT_MESSAGE_SIGNAL_FALSE,
@@ -48,6 +49,7 @@ use log::{debug, error, info, trace, warn};
 mod cert;
 mod clock;
 pub mod device;
+mod frp;
 pub mod keys;
 mod operation;
 pub mod rkp;
@@ -61,7 +63,7 @@ mod tests;
 
 /// Possible KeyMint HAL versions
 #[repr(i32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]
 pub enum KeyMintHalVersion {
     /// V5 removes support for destroying attestation IDs.
     V5 = 500,
@@ -180,6 +182,9 @@ pub struct KeyMintTa {
 
     /// Operation handle of the (single) in-flight operation that requires trusted user presence.
     presence_required_op: Option<OpHandle>,
+
+    /// True iff FRP is active.
+    frp_active: bool,
 }
 
 /// A helper method that can be used by the TA for processing the responses to be sent to the
@@ -305,6 +310,12 @@ pub struct HalInfo {
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct KeyId([u8; 32]);
 
+struct KeyBlobDecryptionResult {
+    keyblob: keyblob::PlaintextKeyBlob,
+    slot: Option<SecureDeletionSlot>,
+    kek_context_is_outdated: bool,
+}
+
 impl KeyMintTa {
     /// Create a new [`KeyMintTa`] instance.
     pub fn new(
@@ -318,6 +329,12 @@ impl KeyMintTa {
         } else {
             MAX_TEE_OPERATIONS
         };
+
+        // FRP is only supported from V5, and only if the FRP secret storage is implemented.
+        let frp_active =
+            KEYMINT_CURRENT_VERSION >= KeyMintHalVersion::V5 && dev.frp_secret_storage.is_some();
+        info!("FRP is enabled: {}", frp_active);
+
         Self {
             imp,
             dev,
@@ -339,6 +356,7 @@ impl KeyMintTa {
             attestation_id_info: RefCell::new(None),
             dice_info: RefCell::new(None),
             additional_attestation_info: Vec::new(),
+            frp_active,
         }
     }
 
@@ -348,6 +366,13 @@ impl KeyMintTa {
             Some(device_hmac) => device_hmac.get_hmac_key(),
             None => None,
         }
+    }
+
+    /// Sets the `DeviceHmac` implementation.
+    ///
+    /// This allows for dependency injection, decoupling the TA from the `ISharedSecret` HAL.
+    pub fn set_device_hmac(&mut self, device_hmac: Box<dyn device::DeviceHmac>) {
+        self.device_hmac = Some(device_hmac);
     }
 
     /// Indicate whether the current device is acting as a StrongBox instance.
@@ -393,7 +418,7 @@ impl KeyMintTa {
         &self,
         key_blob: &[u8],
         params: &[KeyParam],
-    ) -> Result<(keyblob::PlaintextKeyBlob, Option<SecureDeletionSlot>), Error> {
+    ) -> Result<KeyBlobDecryptionResult, Error> {
         let encrypted_keyblob = match keyblob::EncryptedKeyBlob::new(key_blob) {
             Ok(k) => k,
             Err(e) => {
@@ -409,8 +434,10 @@ impl KeyMintTa {
                 return Err(e);
             }
         };
+        let kek_context_is_outdated =
+            self.dev.keys.kek_context_is_outdated(encrypted_keyblob.kek_context())?;
         let hidden = tag::hidden(params, self.root_of_trust()?)?;
-        let sdd_slot = encrypted_keyblob.secure_deletion_slot();
+        let slot = encrypted_keyblob.secure_deletion_slot();
         let root_kek = self.root_kek(encrypted_keyblob.kek_context())?;
         let keyblob = keyblob::decrypt(
             match &self.dev.sdd_mgr {
@@ -423,7 +450,7 @@ impl KeyMintTa {
             encrypted_keyblob,
             hidden,
         )?;
-        Ok((keyblob, sdd_slot))
+        Ok(KeyBlobDecryptionResult { keyblob, slot, kek_context_is_outdated })
     }
 
     /// Parse and decrypt an encrypted key blob, detecting keys that require upgrade.
@@ -432,7 +459,11 @@ impl KeyMintTa {
         key_blob: &[u8],
         params: &[KeyParam],
     ) -> Result<(keyblob::PlaintextKeyBlob, Option<SecureDeletionSlot>), Error> {
-        let (keyblob, slot) = self.keyblob_parse_decrypt_backlevel(key_blob, params)?;
+        let KeyBlobDecryptionResult { keyblob, slot, kek_context_is_outdated } =
+            self.keyblob_parse_decrypt_backlevel(key_blob, params)?;
+        if kek_context_is_outdated {
+            return Err(km_err!(KeyRequiresUpgrade, "KEK context outdated, request upgrade"));
+        }
 
         // Check all of the patchlevels and versions to see if key upgrade is required.
         fn check(v: &u32, curr: u32, name: &str) -> Result<(), Error> {
@@ -571,13 +602,23 @@ impl KeyMintTa {
             } else {
                 return Err(km_err!(
                     RootOfTrustAlreadySet,
-                    "attempt to set boot info to {:?} but already set to {:?}",
-                    boot_info,
-                    existing_boot_info
+                    "attempt to set boot info to {boot_info:?} but already set to {existing_boot_info:?}",
                 ));
             }
         } else {
             info!("Setting boot_info to {boot_info:?}");
+
+            #[cfg(feature = "disable_frp_if_bootloader_unlocked")]
+            if let Some(frp_secret_storage) = &mut self.dev.frp_secret_storage {
+                // If the bootloader is unlocked, default the FRP secret.
+                if !boot_info.device_boot_locked {
+                    info!("Bootloader is unlocked, clearing FRP secret.");
+                    if let Err(e) = frp_secret_storage.store_secret([0; 32]) {
+                        error!("Failed to clear FRP secret: {e:?}");
+                    }
+                }
+            }
+
             let rot_info = RootOfTrustInfo {
                 verified_boot_key: boot_info.verified_boot_key.clone(),
                 device_boot_locked: boot_info.device_boot_locked,
@@ -586,7 +627,7 @@ impl KeyMintTa {
             self.boot_info = Some(boot_info);
             self.rot_data =
                 Some(rot_info.into_vec().map_err(|e| {
-                    km_err!(EncodingError, "failed to encode root-of-trust: {:?}", e)
+                    km_err!(EncodingError, "failed to encode root-of-trust: {e:?}")
                 })?);
         }
         Ok(())
@@ -605,10 +646,7 @@ impl KeyMintTa {
             info!("Setting hal_info to {hal_info:?}");
             self.hal_info = Some(hal_info);
         } else {
-            warn!(
-                "Hal info already set to {:?}, ignoring new values {:?}",
-                self.hal_info, hal_info
-            );
+            warn!("Hal info already set to {:?}, ignoring new values {hal_info:?}", self.hal_info);
         }
     }
 
@@ -625,13 +663,13 @@ impl KeyMintTa {
         if aidl_version == self.aidl_version {
             debug!("Set aidl_version to existing version {aidl_version:?}");
         } else if cfg!(feature = "downgrade") {
-            info!("Change aidl_version from {:?} to {:?}", self.aidl_version, aidl_version);
+            info!("Change aidl_version from {:?} to {aidl_version:?}", self.aidl_version);
             self.aidl_version = aidl_version;
         } else {
             // Only allow HAL-triggered downgrade if the "downgrade" feature is enabled.
             warn!(
-                "Ignoring request to change aidl_version from {:?} to {:?}",
-                self.aidl_version, aidl_version
+                "Ignoring request to change aidl_version from {:?} to {aidl_version:?}",
+                self.aidl_version,
             );
         }
         Ok(())
@@ -851,13 +889,25 @@ impl KeyMintTa {
                 Ok(_ret) => op_ok_rsp(PerformOpRsp::DeviceDeleteAllKeys(DeleteAllKeysResponse {})),
                 Err(e) => op_error_rsp(DeleteAllKeysRequest::CODE, e),
             },
-            PerformOpReq::DeviceDestroyAttestationIds(_req) => match self.destroy_attestation_ids()
-            {
-                Ok(_ret) => op_ok_rsp(PerformOpRsp::DeviceDestroyAttestationIds(
-                    DestroyAttestationIdsResponse {},
-                )),
-                Err(e) => op_error_rsp(DestroyAttestationIdsRequest::CODE, e),
-            },
+            PerformOpReq::DeviceDestroyAttestationIds(_req) => {
+                let aidl_version = self.aidl_version as i32;
+                if aidl_version >= 500 {
+                    let error: Error = ErrorKind::Hal(
+                        ErrorCode::Unimplemented,
+                        format!(
+                            "AIDL version ({aidl_version:?}) >= 500 doesn't support destroying attestation IDs",
+                        ),
+                    )
+                    .into();
+                    return op_error_rsp(DestroyAttestationIdsRequest::CODE, error);
+                }
+                match self.destroy_attestation_ids() {
+                    Ok(_ret) => op_ok_rsp(PerformOpRsp::DeviceDestroyAttestationIds(
+                        DestroyAttestationIdsResponse {},
+                    )),
+                    Err(e) => op_error_rsp(DestroyAttestationIdsRequest::CODE, e),
+                }
+            }
             PerformOpReq::DeviceBegin(req) => {
                 match self.begin_operation(req.purpose, &req.key_blob, req.params, req.auth_token) {
                     Ok(ret) => op_ok_rsp(PerformOpRsp::DeviceBegin(BeginResponse { ret })),
@@ -991,6 +1041,49 @@ impl KeyMintTa {
                     Err(e) => op_error_rsp(GenerateCertificateRequestV2Request::CODE, e),
                 }
             }
+            PerformOpReq::FrpIsActive(_req) => {
+                op_ok_rsp(PerformOpRsp::FrpIsActive(FrpIsActiveResponse {
+                    is_active: self.frp_active(),
+                }))
+            }
+            PerformOpReq::FrpActivate(_req) => match self.activate_frp() {
+                Ok(()) => op_ok_rsp(PerformOpRsp::FrpActivate(FrpActivateResponse {})),
+                Err(e) => op_error_rsp(FrpActivateRequest::CODE, e),
+            },
+            PerformOpReq::FrpDeactivate(req) => match self.deactivate_frp(req.candidate_secret) {
+                Ok(result) => {
+                    op_ok_rsp(PerformOpRsp::FrpDeactivate(FrpDeactivateResponse { result }))
+                }
+                Err(e) => op_error_rsp(FrpDeactivateRequest::CODE, e),
+            },
+            PerformOpReq::FrpSetSecret(req) => match self.set_frp_secret(req.new_secret) {
+                Ok(_ret) => op_ok_rsp(PerformOpRsp::FrpSetSecret(FrpSetSecretResponse {})),
+                Err(e) => op_error_rsp(FrpSetSecretRequest::CODE, e),
+            },
+            PerformOpReq::FrpGetSecret(_req) => match self.get_frp_secret() {
+                Ok(frp_secret) => {
+                    op_ok_rsp(PerformOpRsp::FrpGetSecret(FrpGetSecretResponse { frp_secret }))
+                }
+                Err(e) => op_error_rsp(FrpGetSecretRequest::CODE, e),
+            },
+            PerformOpReq::FrpStoreData(req) => match self.store_frp_data(&req.key, &req.data) {
+                Ok(_ret) => op_ok_rsp(PerformOpRsp::FrpStoreData(FrpStoreDataResponse {})),
+                Err(e) => op_error_rsp(FrpStoreDataRequest::CODE, e),
+            },
+            PerformOpReq::FrpRetrieveData(req) => match self.retrieve_frp_data(&req.key) {
+                Ok(data) => {
+                    op_ok_rsp(PerformOpRsp::FrpRetrieveData(FrpRetrieveDataResponse { data }))
+                }
+                Err(e) => op_error_rsp(FrpRetrieveDataRequest::CODE, e),
+            },
+            PerformOpReq::FrpDeleteData(req) => match self.delete_frp_data(&req.key) {
+                Ok(_ret) => op_ok_rsp(PerformOpRsp::FrpDeleteData(FrpDeleteDataResponse {})),
+                Err(e) => op_error_rsp(FrpDeleteDataRequest::CODE, e),
+            },
+            PerformOpReq::FrpDeleteAllData(_req) => match self.delete_all_frp_data() {
+                Ok(_ret) => op_ok_rsp(PerformOpRsp::FrpDeleteAllData(FrpDeleteAllDataResponse {})),
+                Err(e) => op_error_rsp(FrpDeleteAllDataRequest::CODE, e),
+            },
         }
     }
 
@@ -1107,18 +1200,17 @@ impl KeyMintTa {
         }
         let mac0 = coset::CoseMac0::from_tagged_slice(root_of_trust)
             .map_err(|_e| km_err!(InvalidArgument, "Failed to CBOR-decode CoseMac0"))?;
-        if mac0.payload.is_none() {
-            return Err(km_err!(InvalidArgument, "No payload in CoseMac0"));
-        }
-        mac0.verify_tag(&self.rot_challenge, |tag, data| {
-            match self.verify_device_hmac(data, tag) {
+        mac0.verify_payload_tag(
+            &self.rot_challenge,
+            || km_err!(InvalidArgument, "No payload in CoseMac0"),
+            |tag, data| match self.verify_device_hmac(data, tag) {
                 Ok(true) => Ok(()),
                 Ok(false) => {
                     Err(km_err!(VerificationFailed, "HMAC verification of RootOfTrust failed"))
                 }
                 Err(e) => Err(e),
-            }
-        })?;
+            },
+        )?;
         let payload =
             mac0.payload.ok_or_else(|| km_err!(InvalidArgument, "Missing payload in CoseMac0"))?;
         let boot_info = keymint::BootInfo::from_tagged_slice(&payload)
@@ -1284,23 +1376,37 @@ fn error_rsp(error_code: i32) -> PerformOpResponse {
 fn op_error_rsp(op: KeyMintOperation, err: Error) -> PerformOpResponse {
     warn!("failing {op:?} request with error {err:?}");
     if kmr_wire::is_rpc_operation(op) {
-        // The IRemotelyProvisionedComponent HAL uses a different error space than the
-        // other HALs.
+        // The IRemotelyProvisionedComponent HAL uses its own error space.
         let rpc_err: rpc::ErrorCode = match err.kind() {
             ErrorKind::Cbor(_) | ErrorKind::Der(_) | ErrorKind::Alloc(_) => rpc::ErrorCode::Failed,
-            ErrorKind::Hal(_, _) => {
+            ErrorKind::Hal(_, _) | ErrorKind::Frp(_, _) => {
                 error!("encountered non-RKP error on RKP method! {err:?}");
                 rpc::ErrorCode::Failed
             }
             ErrorKind::Rpc(e, _) => *e,
         };
         error_rsp(rpc_err as i32)
+    } else if kmr_wire::is_frp_operation(op) {
+        // The IFactoryResetProtection HAL uses its own error space.
+        let frp_err: FrpErrorCode = match err.kind() {
+            ErrorKind::Cbor(_) | ErrorKind::Der(_) | ErrorKind::Alloc(_) => FrpErrorCode::Failed,
+            ErrorKind::Hal(_, _) | ErrorKind::Rpc(_, _) => {
+                error!("encountered non-FRP error on FRP method! {err:?}");
+                FrpErrorCode::Failed
+            }
+            ErrorKind::Frp(e, _) => *e,
+        };
+        error_rsp(frp_err as i32)
     } else {
         let hal_err = match err.kind() {
             ErrorKind::Cbor(_) | ErrorKind::Der(_) => ErrorCode::InvalidArgument,
             ErrorKind::Hal(e, _) => *e,
             ErrorKind::Rpc(_, _) => {
                 error!("encountered RKP error on non-RKP method! {err:?}");
+                ErrorCode::InvalidArgument
+            }
+            ErrorKind::Frp(_, _) => {
+                error!("encountered FRP error on non-FRP method! {err:?}");
                 ErrorCode::InvalidArgument
             }
             ErrorKind::Alloc(_) => ErrorCode::MemoryAllocationFailed,

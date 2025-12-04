@@ -63,6 +63,12 @@ pub struct Implementation {
     /// Retrieval of artifacts related to the device implementation of IRemotelyProvisionedComponent
     /// (IRPC) HAL.
     pub rpc: Box<dyn RetrieveRpcArtifacts>,
+
+    /// Storage and retrieval of FRP secret data.
+    pub frp_secret_storage: Option<Box<dyn FrpSecretStorage>>,
+
+    /// Storage and retrieval of additional FRP data.
+    pub frp_data_storage: Option<Box<dyn FrpDataStorage>>,
 }
 
 /// Functionality related to retrieval of device-specific key material, and its subsequent use.
@@ -100,6 +106,16 @@ pub trait RetrieveKeyMaterial {
     /// overridden for back-compatibility reasons.
     fn timestamp_token_mac_input(&self, token: &TimeStampToken) -> Result<Vec<u8>, Error> {
         crate::clock::timestamp_token_mac_input(token)
+    }
+
+    /// Checks if a KEK context is outdated.
+    ///
+    /// This method inspects the provided `kek_context` to determine if the security
+    /// material it represents (e.g., a DICE policy) is older than the device's current
+    /// security state. If so, this method should return `true`, signaling that the key
+    /// needs to be re-wrapped with a new Key Encryption Key (KEK).
+    fn kek_context_is_outdated(&self, _kek_context: &[u8]) -> Result<bool, Error> {
+        Ok(false)
     }
 }
 
@@ -187,6 +203,10 @@ pub trait BootloaderStatus {
 pub trait RetrieveRpcArtifacts {
     /// Retrieve secret bytes (of the given output length) derived from a hardware backed key.
     /// For a given context, the output is deterministic.
+    ///
+    /// This method is used by the default implementation of `compute_hmac_sha256`. It is not
+    /// needed if `compute_hmac_sha256` is provided with a non-default implementation that
+    /// uses its own key.
     fn derive_bytes_from_hbk(
         &self,
         hkdf: &dyn crypto::Hkdf,
@@ -194,13 +214,15 @@ pub trait RetrieveRpcArtifacts {
         output_len: usize,
     ) -> Result<Vec<u8>, Error>;
 
-    /// Compute HMAC_SHA256 over the given input using a key derived from hardware.
+    /// Compute HMAC_SHA256 over the given `input`, using a key that persists at least until reboot.
     fn compute_hmac_sha256(
         &self,
         hmac: &dyn crypto::Hmac,
         hkdf: &dyn crypto::Hkdf,
         input: &[u8],
     ) -> Result<Vec<u8>, Error> {
+        // Default implementation uses a key derived from hardware (which
+        // therefore persists even beyond reboot).
         let secret = self.derive_bytes_from_hbk(hkdf, RPC_HMAC_KEY_CONTEXT, RPC_HMAC_KEY_LEN)?;
         crypto::hmac_sha256(hmac, &secret, input)
     }
@@ -343,6 +365,45 @@ impl TrustedUserPresence for TrustedPresenceUnsupported {}
 pub trait StorageKeyWrapper {
     /// Wrap the provided key material using an ephemeral storage key.
     fn ephemeral_wrap(&self, key_material: &KeyMaterial) -> Result<Vec<u8>, Error>;
+}
+
+/// FRP secret storage provider.  This is optional, but strongly recommended, and will become
+/// mandatory in the future.  If not implemented, this KeyMint will not provide functional
+/// IFactoryResetProtection.
+///
+/// FRP secret storage must survive factory reset and must be secure, meaning that attackers
+/// cannot read or modify it.
+pub trait FrpSecretStorage {
+    /// Store the FRP secret.  Updates must be atomic, meaning that if this method returns
+    /// `Ok(())`, the secret must have been successfully persisted and if it returns an error the
+    /// storage must not have been modified.
+    fn store_secret(&mut self, secret: [u8; 32]) -> Result<(), Error>;
+    /// Retrieve the FRP secret. Returns `[0; 32]` if no secret has been stored.
+    fn retrieve_secret(&self) -> Result<[u8; 32], Error>;
+}
+
+/// FRP data storage provider.  This is optional, but recommended.
+///
+/// FRP data storage must survive factory reset but need not be secure.  Methods that modify the
+/// state of storage must be atomic, meaning that if they return `Ok(())` the data must have been
+/// successfully persisted and if they return an error the storage must not have been modified.
+///
+/// If provided, FRP data storage must provide 16 KiB of total storage, including keys and
+/// data.  Keys are UTF-8 strings no more than 16 bytes in length.  If a storage request would
+/// cause storage consumed to exceed 16 KiB and the implementation cannot support more than 16
+/// KiB, or if a key more than 16 bytes in length is provied,
+//  [`Err(frp_err!(IllegalArgument, "<some string>"))`], should be returned.
+pub trait FrpDataStorage {
+    /// Store the specified data under the specified key, overwriting any previous value.
+    fn store_data(&mut self, key: &str, data: &[u8]) -> Result<(), Error>;
+    /// Retrieve data previously stored under the specified key.  Returns `None` if the key was
+    /// not found.
+    fn retrieve_data(&self, key: &str) -> Result<Option<Vec<u8>>, Error>;
+    /// Delete data previously stored under the specified key, if any.  Does not return an
+    /// error if the key is not found.
+    fn delete_data(&mut self, key: &str) -> Result<(), Error>;
+    /// Delete all stored data.
+    fn clear(&mut self) -> Result<(), Error>;
 }
 
 // No-op implementations for the non-optional device traits. These implementations are only
