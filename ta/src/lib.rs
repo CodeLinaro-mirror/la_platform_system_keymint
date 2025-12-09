@@ -714,8 +714,9 @@ impl KeyMintTa {
             if let Some(get_ids_impl) = self.dev.attest_ids.as_ref() {
                 // Attestation IDs are not populated, but we have a trait implementation that
                 // may provide them.
-                match get_ids_impl.get() {
-                    Ok(ids) => *self.attestation_id_info.borrow_mut() = Some(Rc::new(ids)),
+                match get_ids_impl.get_ids() {
+                    Ok(Some(ids)) => *self.attestation_id_info.borrow_mut() = Some(Rc::new(ids)),
+                    Ok(None) => warn!("Attestation IDs not yet available"),
                     Err(e) => error!("Failed to retrieve attestation IDs: {e:?}"),
                 }
             }

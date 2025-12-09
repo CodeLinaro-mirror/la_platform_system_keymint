@@ -180,8 +180,16 @@ pub trait RetrieveCertSigningInfo {
 /// Retrieval of attestation ID information.  This information will not change (so the caller can
 /// cache this information after first invocation).
 pub trait RetrieveAttestationIds {
-    /// Return the attestation IDs associated with the device, if available.
+    /// Return the attestation IDs associated with the device, if ID attestation is supported.
+    /// This method must return IDs, so should only be implemented if pre-provisioned IDs are
+    /// always available.
     fn get(&self) -> Result<crate::AttestationIdInfo, Error>;
+
+    /// Return the attestation IDs associated with the device, if available.  If ID attestation is
+    /// supported, but ID values are not available yet, return `Ok(None)`.
+    fn get_ids(&self) -> Result<Option<crate::AttestationIdInfo>, Error> {
+        self.get().map(Some)
+    }
 
     /// Destroy all attestation IDs associated with the device.
     fn destroy_all(&mut self) -> Result<(), Error>;
