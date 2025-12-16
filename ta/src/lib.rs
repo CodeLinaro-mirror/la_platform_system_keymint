@@ -1123,8 +1123,6 @@ impl KeyMintTa {
         if data.len() > 2048 {
             return Err(km_err!(InvalidInputLength, "entropy size {} too large", data.len()));
         };
-
-        info!("add {} bytes of entropy", data.len());
         self.imp.rng.add_entropy(data);
         Ok(())
     }
