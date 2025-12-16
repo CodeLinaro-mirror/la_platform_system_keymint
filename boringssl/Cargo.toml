@@ -8,6 +8,12 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 
+[features]
+default = []
+# `nightly` enables the use of nightly-only standard library functionality,
+# specifically fallible allocation. This requires nightly Rust.
+nightly = []
+
 [dependencies]
 ffi = { package = "openssl-sys", version = "^0.9.75" }
 foreign-types = "0.3.1"

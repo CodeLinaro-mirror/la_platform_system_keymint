@@ -13,12 +13,14 @@
 // limitations under the License.
 
 //! Implementations of [`kmr_common::crypto`] traits based on BoringSSL.
+#![cfg_attr(feature = "nightly", feature(allocator_api))]
 #![no_std]
 
 extern crate alloc;
 
 use alloc::boxed::Box;
 use alloc::string::ToString;
+use core::mem::MaybeUninit;
 use kmr_common::{crypto, Error, ErrorKind};
 use kmr_wire::keymint::{Digest, ErrorCode};
 use log::error;
@@ -191,5 +193,100 @@ fn cvt(r: libc::c_int) -> Result<libc::c_int, Error> {
         Err(openssl_last_err())
     } else {
         Ok(r)
+    }
+}
+
+/// Returns a boxed BoringSSL structure that is initialized by some function.
+/// Requires that the given function completely initializes the value or else
+/// returns `Err`.
+///
+/// Adapted from boringssl/rust/bssl-crypto/lib.rs
+///
+/// # Safety
+///
+/// The argument must fully initialize the pointed-to `T` if it returns
+/// `Ok`. If it returns `Err` then there are no safety requirements.
+unsafe fn initialized_boxed_struct<T, F>(init: F) -> Result<Box<T>, Error>
+where
+    F: FnOnce(*mut T) -> Result<(), Error>,
+{
+    #[cfg(feature = "nightly")]
+    let Ok(mut out_uninit) = Box::try_new(MaybeUninit::<T>::uninit()) else {
+        return Err(kmr_common::alloc_err!("Box<T>"));
+    };
+    #[cfg(not(feature = "nightly"))]
+    let mut out_uninit = Box::new(MaybeUninit::<T>::uninit());
+
+    init(out_uninit.as_mut_ptr()).map(|_| {
+        // Safety: argument assumed to fully initialize the `T` on returning `Ok`.
+        unsafe { out_uninit.assume_init() }
+    })
+}
+
+/// Returns a BoringSSL structure that is initialized by some function.
+/// Requires that the given function completely initializes the value or else
+/// returns `Err`.
+///
+/// Adapted from boringssl/rust/bssl-crypto/lib.rs
+///
+/// # Safety
+///
+/// The argument must fully initialize the pointed-to `T` in all circumstances.
+unsafe fn initialized_struct<T, F>(init: F) -> Result<T, Error>
+where
+    F: FnOnce(*mut T) -> Result<(), Error>,
+{
+    let mut out_uninit = MaybeUninit::<T>::uninit();
+    init(out_uninit.as_mut_ptr()).map(|_| {
+        // Safety: argument assumed to fully initialize the `T` on returning `Ok`.
+        unsafe { out_uninit.assume_init() }
+    })
+}
+
+/// FfiSlice exists to provide `as_ffi_ptr` on slices. Calling `as_ptr` on an
+/// empty Rust slice may return the alignment of the type, rather than NULL, as
+/// the pointer. When passing pointers into C/C++ code, that is not a valid
+/// pointer. Thus this method should be used whenever passing a pointer to a
+/// slice into BoringSSL code.
+///
+/// Copied from boringssl/rust/bssl-crypto/lib.rs
+trait FfiSlice<T> {
+    fn as_ffi_ptr(&self) -> *const T;
+}
+
+impl<T> FfiSlice<T> for [T] {
+    fn as_ffi_ptr(&self) -> *const T {
+        if self.is_empty() {
+            core::ptr::null()
+        } else {
+            self.as_ptr()
+        }
+    }
+}
+
+impl<T, const N: usize> FfiSlice<T> for [T; N] {
+    fn as_ffi_ptr(&self) -> *const T {
+        if N == 0 {
+            core::ptr::null()
+        } else {
+            self.as_ptr()
+        }
+    }
+}
+
+/// See the comment for [`FfiSlice`].
+///
+/// Copied from boringssl/rust/bssl-crypto/lib.rs
+trait FfiMutSlice {
+    fn as_mut_ffi_ptr(&mut self) -> *mut u8;
+}
+
+impl FfiMutSlice for [u8] {
+    fn as_mut_ffi_ptr(&mut self) -> *mut u8 {
+        if self.is_empty() {
+            core::ptr::null_mut()
+        } else {
+            self.as_mut_ptr()
+        }
     }
 }
