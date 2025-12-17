@@ -18,7 +18,7 @@ use crate::{initialized_boxed_struct, initialized_struct, FfiMutSlice, FfiSlice}
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use kmr_common::crypto::{self, mldsa::Key, AccumulatingOperation, MlDsa, OpaqueOr};
-use kmr_common::{alloc_err, explicit, vec_try, Error};
+use kmr_common::{explicit, vec_try, Error};
 
 /// Size of a message representative.
 const MU_BYTES: usize = bssl_sys::MLDSA_MU_BYTES as usize;
