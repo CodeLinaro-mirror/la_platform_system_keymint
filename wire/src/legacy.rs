@@ -54,6 +54,9 @@
 //! - Other TAs (e.g. Gatekeeper, ConfirmationUI) running in the secure environment.
 //! - Provisioning tools.
 
+// TODO(b/468831165): remove when rust-lang #147648 is fixed
+#![allow(unused_assignments)]
+
 use crate::{
     keymint::{Algorithm, ErrorCode, VerifiedBootState},
     try_from_n,
