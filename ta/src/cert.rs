@@ -1084,6 +1084,16 @@ fn asn1_octet_string(
     }
 }
 
+fn asn1_root_of_trust(
+    tag: Tag,
+    rot: Option<&[u8]>,
+) -> der::Result<Option<ExplicitTaggedValue<RootOfTrust<'_>>>> {
+    match rot {
+        Some(rot) => Ok(Some(ExplicitTaggedValue::new(tag, RootOfTrust::from_der(rot)?))),
+        None => Ok(None),
+    }
+}
+
 fn asn1_val<T: Encode>(
     val: Option<ExplicitTaggedValue<T>>,
     writer: &mut impl der::Writer,
@@ -1105,7 +1115,7 @@ impl<'a> Sequence<'a> for AuthorizationList<'a> {}
 
 impl EncodeValue for AuthorizationList<'_> {
     fn value_len(&self) -> der::Result<Length> {
-        let mut length = asn1_len(asn1_set_of_integer!(self.auths, Purpose))?
+        asn1_len(asn1_set_of_integer!(self.auths, Purpose))?
             + asn1_len(asn1_integer!(self.auths, Algorithm))?
             + asn1_len(asn1_integer_newtype!(self.auths, KeySize))?
             + asn1_len(asn1_set_of_integer!(self.auths, BlockMode))?
@@ -1136,27 +1146,11 @@ impl EncodeValue for AuthorizationList<'_> {
             + asn1_len(asn1_null!(self.auths, TrustedConfirmationRequired))?
             + asn1_len(asn1_null!(self.auths, UnlockedDeviceRequired))?
             + asn1_len(asn1_integer_datetime!(self.auths, CreationDatetime))?
-            + asn1_len(asn1_integer!(self.auths, Origin))?;
-        if let Some(encoded_rot_info) = &self.rot_info {
-            length = length
-                + ExplicitTaggedValue::new(
-                    Tag::RootOfTrust,
-                    RootOfTrust::from_der(encoded_rot_info.as_slice())?,
-                )
-                .encoded_len()?;
-        }
-        length = length
+            + asn1_len(asn1_integer!(self.auths, Origin))?
+            + asn1_len(asn1_root_of_trust(Tag::RootOfTrust, self.rot_info.as_deref())?)?
             + asn1_len(asn1_integer!(self.auths, OsVersion))?
-            + asn1_len(asn1_integer!(self.auths, OsPatchlevel))?;
-        if let Some(app_id) = &self.app_id {
-            length = length
-                + ExplicitTaggedValue::new(
-                    Tag::AttestationApplicationId,
-                    OctetStringRef::new(app_id)?,
-                )
-                .encoded_len()?;
-        }
-        length = length
+            + asn1_len(asn1_integer!(self.auths, OsPatchlevel))?
+            + asn1_len(asn1_octet_string(Tag::AttestationApplicationId, self.app_id.as_deref())?)?
             + asn1_len(asn1_octet_string(Tag::AttestationIdBrand, self.ids.brand.as_deref())?)?
             + asn1_len(asn1_octet_string(Tag::AttestationIdDevice, self.ids.device.as_deref())?)?
             + asn1_len(asn1_octet_string(Tag::AttestationIdProduct, self.ids.product.as_deref())?)?
@@ -1171,12 +1165,8 @@ impl EncodeValue for AuthorizationList<'_> {
             + asn1_len(asn1_integer!(self.auths, VendorPatchlevel))?
             + asn1_len(asn1_integer!(self.auths, BootPatchlevel))?
             + asn1_len(asn1_null!(self.auths, DeviceUniqueAttestation))?
-            + asn1_len(asn1_octet_string(
-                Tag::AttestationIdSecondImei,
-                self.ids.imei2.as_deref(),
-            )?)?
-            + asn1_len(asn1_octet_string(Tag::ModuleHash, self.module_hash.as_deref())?)?;
-        length
+            + asn1_len(asn1_octet_string(Tag::AttestationIdSecondImei, self.ids.imei2.as_deref())?)?
+            + asn1_len(asn1_octet_string(Tag::ModuleHash, self.module_hash.as_deref())?)?
     }
 
     fn encode_value(&self, writer: &mut impl der::Writer) -> der::Result<()> {
@@ -1213,20 +1203,14 @@ impl EncodeValue for AuthorizationList<'_> {
         asn1_val(asn1_integer_datetime!(self.auths, CreationDatetime), writer)?;
         asn1_val(asn1_integer!(self.auths, Origin), writer)?;
         // Root of trust info is a special case (not in key characteristics).
-        if let Some(encoded_rot_info) = &self.rot_info {
-            ExplicitTaggedValue::new(
-                Tag::RootOfTrust,
-                RootOfTrust::from_der(encoded_rot_info.as_slice())?,
-            )
-            .encode(writer)?;
-        }
+        asn1_val(asn1_root_of_trust(Tag::RootOfTrust, self.rot_info.as_deref())?, writer)?;
         asn1_val(asn1_integer!(self.auths, OsVersion), writer)?;
         asn1_val(asn1_integer!(self.auths, OsPatchlevel), writer)?;
         // Attestation application ID is a special case (not in key characteristics).
-        if let Some(app_id) = &self.app_id {
-            ExplicitTaggedValue::new(Tag::AttestationApplicationId, OctetStringRef::new(app_id)?)
-                .encode(writer)?;
-        }
+        asn1_val(
+            asn1_octet_string(Tag::AttestationApplicationId, self.app_id.as_deref())?,
+            writer,
+        )?;
         // Accuracy of attestation IDs has already been checked, so just copy across.
         asn1_val(asn1_octet_string(Tag::AttestationIdBrand, self.ids.brand.as_deref())?, writer)?;
         asn1_val(asn1_octet_string(Tag::AttestationIdDevice, self.ids.device.as_deref())?, writer)?;
