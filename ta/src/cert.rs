@@ -985,10 +985,7 @@ macro_rules! asn1_set_of_integer {
                     set.insert_ordered(val)?;
                     prev_val = Some(val);
                 }
-                Some(ExplicitTaggedValue {
-                    tag: raw_tag_value(Tag::$variant),
-                    val: set,
-                })
+                Some(ExplicitTaggedValue::new(Tag::$variant, set))
             } else {
                 None
             }
@@ -1001,10 +998,7 @@ macro_rules! asn1_integer {
             log::warn!("failed to get {} value for ext", stringify!($variant));
             der::Error::new(der::ErrorKind::Failed, der::Length::ZERO)
         })? {
-            Some(ExplicitTaggedValue {
-                tag: raw_tag_value(Tag::$variant),
-                val: *val as i64
-            })
+            Some(ExplicitTaggedValue::new(Tag::$variant, *val as i64))
         } else {
             None
         }
@@ -1016,10 +1010,7 @@ macro_rules! asn1_integer_newtype {
             log::warn!("failed to get {} value for ext", stringify!($variant));
             der::Error::new(der::ErrorKind::Failed, der::Length::ZERO)
         })? {
-            Some(ExplicitTaggedValue {
-                tag: raw_tag_value(Tag::$variant),
-                val: val.0 as i64
-            })
+            Some(ExplicitTaggedValue::new(Tag::$variant, val.0 as i64))
         } else {
             None
         }
@@ -1031,10 +1022,7 @@ macro_rules! asn1_integer_datetime {
             log::warn!("failed to get {} value for ext", stringify!($variant));
             der::Error::new(der::ErrorKind::Failed, der::Length::ZERO)
         })? {
-            Some(ExplicitTaggedValue {
-                tag: raw_tag_value(Tag::$variant),
-                val: val.ms_since_epoch
-            })
+            Some(ExplicitTaggedValue::new(Tag::$variant, val.ms_since_epoch))
         } else {
             None
         }
@@ -1046,10 +1034,7 @@ macro_rules! asn1_null {
             log::warn!("failed to get {} value for ext", stringify!($variant));
             der::Error::new(der::ErrorKind::Failed, der::Length::ZERO)
         })? {
-            Some(ExplicitTaggedValue {
-                tag: raw_tag_value(Tag::$variant),
-                val: ()
-            })
+            Some(ExplicitTaggedValue::new(Tag::$variant, ()))
         } else {
             None
         }
@@ -1061,10 +1046,7 @@ macro_rules! asn1_octet_string {
             log::warn!("failed to get {} value for ext", stringify!($variant));
             der::Error::new(der::ErrorKind::Failed, der::Length::ZERO)
         })? {
-            Some(ExplicitTaggedValue {
-                tag: raw_tag_value(Tag::$variant),
-                val: der::asn1::OctetStringRef::new(val)?,
-            })
+            Some(ExplicitTaggedValue::new(Tag::$variant, OctetStringRef::new(val)?))
         } else {
             None
         }
@@ -1075,10 +1057,9 @@ fn asn1_val<T: Encode>(
     val: Option<ExplicitTaggedValue<T>>,
     writer: &mut impl der::Writer,
 ) -> der::Result<()> {
-    if let Some(val) = val {
-        val.encode(writer)
-    } else {
-        Ok(())
+    match val {
+        Some(val) => val.encode(writer),
+        None => Ok(()),
     }
 }
 
@@ -1127,10 +1108,10 @@ impl EncodeValue for AuthorizationList<'_> {
             + asn1_len(asn1_integer!(self.auths, Origin))?;
         if let Some(encoded_rot_info) = &self.rot_info {
             length = length
-                + ExplicitTaggedValue {
-                    tag: raw_tag_value(Tag::RootOfTrust),
-                    val: RootOfTrust::from_der(encoded_rot_info.as_slice())?,
-                }
+                + ExplicitTaggedValue::new(
+                    Tag::RootOfTrust,
+                    RootOfTrust::from_der(encoded_rot_info.as_slice())?,
+                )
                 .encoded_len()?;
         }
         length = length
@@ -1138,10 +1119,10 @@ impl EncodeValue for AuthorizationList<'_> {
             + asn1_len(asn1_integer!(self.auths, OsPatchlevel))?;
         if let Some(app_id) = &self.app_id {
             length = length
-                + ExplicitTaggedValue {
-                    tag: raw_tag_value(Tag::AttestationApplicationId),
-                    val: der::asn1::OctetStringRef::new(app_id)?,
-                }
+                + ExplicitTaggedValue::new(
+                    Tag::AttestationApplicationId,
+                    OctetStringRef::new(app_id)?,
+                )
                 .encoded_len()?;
         }
         length = length
@@ -1196,21 +1177,18 @@ impl EncodeValue for AuthorizationList<'_> {
         asn1_val(asn1_integer!(self.auths, Origin), writer)?;
         // Root of trust info is a special case (not in key characteristics).
         if let Some(encoded_rot_info) = &self.rot_info {
-            ExplicitTaggedValue {
-                tag: raw_tag_value(Tag::RootOfTrust),
-                val: RootOfTrust::from_der(encoded_rot_info.as_slice())?,
-            }
+            ExplicitTaggedValue::new(
+                Tag::RootOfTrust,
+                RootOfTrust::from_der(encoded_rot_info.as_slice())?,
+            )
             .encode(writer)?;
         }
         asn1_val(asn1_integer!(self.auths, OsVersion), writer)?;
         asn1_val(asn1_integer!(self.auths, OsPatchlevel), writer)?;
         // Attestation application ID is a special case (not in key characteristics).
         if let Some(app_id) = &self.app_id {
-            ExplicitTaggedValue {
-                tag: raw_tag_value(Tag::AttestationApplicationId),
-                val: der::asn1::OctetStringRef::new(app_id)?,
-            }
-            .encode(writer)?;
+            ExplicitTaggedValue::new(Tag::AttestationApplicationId, OctetStringRef::new(app_id)?)
+                .encode(writer)?;
         }
         // Accuracy of attestation IDs has already been checked, so just copy across.
         asn1_val(asn1_octet_string!(&self.keygen_params, AttestationIdBrand), writer)?;
@@ -1236,6 +1214,10 @@ struct ExplicitTaggedValue<T: Encode> {
 }
 
 impl<T: Encode> ExplicitTaggedValue<T> {
+    fn new(tag: Tag, val: T) -> ExplicitTaggedValue<T> {
+        ExplicitTaggedValue { tag: raw_tag_value(tag), val }
+    }
+
     fn explicit_tag_len(&self) -> der::Result<der::Length> {
         match self.tag {
             0..=0x1e => Ok(der::Length::ONE),
