@@ -86,10 +86,12 @@ pub(crate) fn tbs_certificate<'a>(
     // - RSA: RFC 4055 section 5 requires `NULL` parameters.
     // - ECDSA: RFC 5758 section 3.2 requires parameters be omitted.
     // - EdDSA: RFC 8410 section 3 requires parameters be omitted.
+    // - ML-DSA: RFC 9881 section 2 requires parameters be omitted.
     let (sig_alg_oid, parameters) = match info {
         Some(info) => match info.signing_key {
             KeyMaterial::Rsa(_) => (crypto::rsa::SHA256_PKCS1_SIGNATURE_OID, Some(Any::null())),
             KeyMaterial::Ec(curve, _, _) => (crypto::ec::curve_to_signing_oid(curve), None),
+            KeyMaterial::MlDsa(variant, _) => (crypto::mldsa::variant_to_oid(variant), None),
             _ => {
                 return Err(km_err!(UnsupportedAlgorithm, "unexpected cert signing key type"));
             }
@@ -102,6 +104,10 @@ pub(crate) fn tbs_certificate<'a>(
                 }
                 keymint::Algorithm::Ec => {
                     (crypto::ec::curve_to_signing_oid(tag::get_ec_curve(chars)?), None)
+                }
+                keymint::Algorithm::MlDsa => {
+                    let variant = tag::get_mldsa_variant(chars)?;
+                    (crypto::mldsa::variant_to_oid(variant), None)
                 }
                 alg => {
                     return Err(km_err!(
@@ -371,6 +377,7 @@ pub(crate) fn attestation_extension<'a>(
 ///     callerNonce                [7] EXPLICIT NULL OPTIONAL,  -- Symmetric keys only
 ///     minMacLength               [8] EXPLICIT INTEGER OPTIONAL,  -- Symmetric keys only
 ///     ecCurve                    [10] EXPLICIT INTEGER OPTIONAL,
+///     mlDsaVariant               [11] EXPLICIT INTEGER OPTIONAL,
 ///     rsaPublicExponent          [200] EXPLICIT INTEGER OPTIONAL,
 ///     mgfDigest                  [203] EXPLICIT SET OF INTEGER OPTIONAL,
 ///     rollbackResistance         [303] EXPLICIT NULL OPTIONAL,
@@ -431,6 +438,7 @@ const AUTHORIZATION_LIST_TAGS: &[Tag] = &[
     Tag::CallerNonce,
     Tag::MinMacLength,
     Tag::EcCurve,
+    Tag::MlDsaVariant,
     Tag::RsaPublicExponent,
     Tag::RsaOaepMgfDigest,
     Tag::RollbackResistance,
@@ -785,6 +793,9 @@ fn decode_value_from_bytes(
         Tag::EcCurve => {
             key_param_from_asn1_integer!(EcCurve, i32, tlv_bytes, key_params);
         }
+        Tag::MlDsaVariant => {
+            key_param_from_asn1_integer!(MlDsaVariant, i32, tlv_bytes, key_params);
+        }
         Tag::RsaPublicExponent => {
             key_param_from_asn1_integer_newtype!(
                 RsaPublicExponent,
@@ -1094,6 +1105,7 @@ impl EncodeValue for AuthorizationList<'_> {
             + asn1_len(asn1_null!(self.auths, CallerNonce))?
             + asn1_len(asn1_integer!(self.auths, MinMacLength))?
             + asn1_len(asn1_integer!(self.auths, EcCurve))?
+            + asn1_len(asn1_integer!(self.auths, MlDsaVariant))?
             + asn1_len(asn1_integer_newtype!(self.auths, RsaPublicExponent))?
             + asn1_len(asn1_set_of_integer!(self.auths, RsaOaepMgfDigest))?
             + asn1_len(asn1_null!(self.auths, RollbackResistance))?
@@ -1162,6 +1174,7 @@ impl EncodeValue for AuthorizationList<'_> {
         asn1_val(asn1_null!(self.auths, CallerNonce), writer)?;
         asn1_val(asn1_integer!(self.auths, MinMacLength), writer)?;
         asn1_val(asn1_integer!(self.auths, EcCurve), writer)?;
+        asn1_val(asn1_integer!(self.auths, MlDsaVariant), writer)?;
         asn1_val(asn1_integer_newtype!(self.auths, RsaPublicExponent), writer)?;
         asn1_val(asn1_set_of_integer!(self.auths, RsaOaepMgfDigest), writer)?;
         asn1_val(asn1_null!(self.auths, RollbackResistance), writer)?;

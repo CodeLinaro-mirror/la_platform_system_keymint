@@ -35,6 +35,8 @@ pub mod des;
 pub mod ec;
 pub mod eq;
 pub mod hmac;
+#[cfg(soong)]
+pub mod mldsa;
 pub mod rng;
 pub mod rsa;
 pub mod sha256;
@@ -68,6 +70,7 @@ pub fn implementation(
         ckdf: Box::new(aes_cmac::BoringAesCmac),
         hkdf: Box::new(hmac::BoringHmac),
         sha256: Box::new(sha256::BoringSha256),
+        mldsa: Box::new(mldsa::BoringMlDsa),
     }
 }
 

@@ -65,7 +65,8 @@ mod tests;
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]
 pub enum KeyMintHalVersion {
-    /// V5 removes support for destroying attestation IDs.
+    /// V5 removes support for destroying attestation IDs, and adds support for ML-DSA and IMEI
+    /// reordering.
     V5 = 500,
     /// V4 adds support for attestation of module information.
     V4 = 400,
@@ -78,7 +79,7 @@ pub enum KeyMintHalVersion {
 }
 
 /// Version code for current KeyMint.
-pub const KEYMINT_CURRENT_VERSION: KeyMintHalVersion = KeyMintHalVersion::V4;
+pub const KEYMINT_CURRENT_VERSION: KeyMintHalVersion = KeyMintHalVersion::V5;
 
 /// Maximum number of parallel operations supported when running as TEE.
 const MAX_TEE_OPERATIONS: usize = 16;
@@ -128,6 +129,9 @@ pub struct KeyMintTa {
 
     /// The version of the HAL AIDL interface specification that this TA acts as.
     aidl_version: KeyMintHalVersion,
+
+    /// Versions of the HAL that this TA can be requested to act as.
+    allowed_aidl_versions: Vec<KeyMintHalVersion>,
 
     /**
      * State that is set after the TA starts, but latched thereafter.
@@ -205,7 +209,7 @@ pub fn split_rsp(mut rsp_data: &[u8], max_size: usize) -> Result<Vec<Vec<u8>>, E
     // Need to allocate one byte for the more_msg_signal.
     let allowed_msg_length = max_size - 1;
     let mut num_of_splits = rsp_data.len() / allowed_msg_length;
-    if rsp_data.len() % allowed_msg_length > 0 {
+    if !rsp_data.len().is_multiple_of(allowed_msg_length) {
         num_of_splits += 1;
     }
     let mut split_rsp = vec_try_with_capacity!(num_of_splits)?;
@@ -324,6 +328,17 @@ impl KeyMintTa {
         imp: crypto::Implementation,
         dev: device::Implementation,
     ) -> Self {
+        Self::new_allowing_versions(hw_info, rpc_info, imp, dev, Vec::new())
+    }
+
+    /// Create a new [`KeyMintTa`] instance that allows the HAL service to set particular versions.
+    pub fn new_allowing_versions(
+        hw_info: HardwareInfo,
+        rpc_info: RpcInfo,
+        imp: crypto::Implementation,
+        dev: device::Implementation,
+        allowed_aidl_versions: Vec<KeyMintHalVersion>,
+    ) -> Self {
         let max_operations = if hw_info.security_level == SecurityLevel::Strongbox {
             MAX_STRONGBOX_OPERATIONS
         } else {
@@ -349,6 +364,7 @@ impl KeyMintTa {
             hw_info,
             rpc_info,
             aidl_version: KEYMINT_CURRENT_VERSION,
+            allowed_aidl_versions,
             boot_info: None,
             rot_data: None,
             hal_info: None,
@@ -662,6 +678,9 @@ impl KeyMintTa {
         };
         if aidl_version == self.aidl_version {
             debug!("Set aidl_version to existing version {aidl_version:?}");
+        } else if self.allowed_aidl_versions.contains(&aidl_version) {
+            info!("Change aidl_version from {:?} to allowed {aidl_version:?}", self.aidl_version);
+            self.aidl_version = aidl_version;
         } else if cfg!(feature = "downgrade") {
             info!("Change aidl_version from {:?} to {aidl_version:?}", self.aidl_version);
             self.aidl_version = aidl_version;
