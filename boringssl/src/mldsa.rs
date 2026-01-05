@@ -16,7 +16,7 @@
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use bssl_crypto::mldsa::{Prehash65, PrivateKey65};
+use bssl_crypto::mldsa::{Prehash65, Prehash87, PrivateKey65, PrivateKey87};
 use kmr_common::crypto::{self, mldsa::Key, AccumulatingOperation, MlDsa, OpaqueOr};
 use kmr_common::{explicit, Error};
 
@@ -25,15 +25,14 @@ pub struct BoringMlDsa;
 
 enum BoringPrivateKey {
     MlDsa65(PrivateKey65),
-    // TODO(b/395069628): add 87 variant
-    // MlDsa87(PrivateKey87),
+    MlDsa87(PrivateKey87),
 }
 
 impl From<&Key> for BoringPrivateKey {
     fn from(key: &Key) -> Self {
         match key {
             Key::MlDsa65(seed) => Self::MlDsa65(PrivateKey65::from_seed(seed)),
-            Key::MlDsa87(_seed) => todo!("b/395069628: add MlDsa87(PrivateKey87)"),
+            Key::MlDsa87(seed) => Self::MlDsa87(PrivateKey87::from_seed(seed)),
         }
     }
 }
@@ -44,8 +43,7 @@ impl MlDsa for BoringMlDsa {
         let bssl_key = BoringPrivateKey::from(key);
         Ok(match bssl_key {
             BoringPrivateKey::MlDsa65(k) => k.to_public_key().to_bytes(),
-            // TODO(b/395069628): add 87 variant
-            // BoringPrivateKey::MlDsa87(k) => k.to_public_key().to_bytes(),
+            BoringPrivateKey::MlDsa87(k) => k.to_public_key().to_bytes(),
         })
     }
 
@@ -56,11 +54,11 @@ impl MlDsa for BoringMlDsa {
             BoringPrivateKey::MlDsa65(key) => {
                 let prehash = key.to_public_key().prehash();
                 BoringMlDsaSignOperation::MlDsa65(key, prehash)
-            } // TODO(b/395069628): add 87 variant
-              // BoringPrivateKey::MlDsa87(key) => {
-              //     let prehash = key.to_public_key().prehash();
-              //    BoringMlDsaSignOperation::MlDsa87(key, prehash)
-              //}
+            }
+            BoringPrivateKey::MlDsa87(key) => {
+                let prehash = key.to_public_key().prehash();
+                BoringMlDsaSignOperation::MlDsa87(key, prehash)
+            }
         };
         Ok(Box::new(op))
     }
@@ -69,16 +67,14 @@ impl MlDsa for BoringMlDsa {
 /// ML-DSA signing operation based on BoringSSL.
 enum BoringMlDsaSignOperation {
     MlDsa65(PrivateKey65, Prehash65),
-    // TODO(b/395069628): add 87 variant
-    // MlDsa87(PrivateKey87, Prehash87),
+    MlDsa87(PrivateKey87, Prehash87),
 }
 
 impl crypto::AccumulatingOperation for BoringMlDsaSignOperation {
     fn update(&mut self, data: &[u8]) -> Result<(), Error> {
         match self {
             Self::MlDsa65(_k, prehash) => prehash.update(data),
-            // TODO(b/395069628): add 87 variant
-            // Self::MlDsa87(_k, prehash) => prehash.update(data),
+            Self::MlDsa87(_k, prehash) => prehash.update(data),
         }
         Ok(())
     }
@@ -86,8 +82,7 @@ impl crypto::AccumulatingOperation for BoringMlDsaSignOperation {
     fn finish(self: Box<Self>) -> Result<Vec<u8>, Error> {
         Ok(match *self {
             Self::MlDsa65(key, prehash) => key.sign_prehashed(prehash),
-            // TODO(b/395069628): add 87 variant
-            // Self::MlDsa87(key, prehash) => key.sign_prehashed(prehash),
+            Self::MlDsa87(key, prehash) => key.sign_prehashed(prehash),
         })
     }
 }
