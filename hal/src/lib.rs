@@ -417,10 +417,9 @@ pub fn register_binder_services<T: SerializedChannel + 'static>(
     for hal in hals_to_register {
         let service_name = format!("{hal}/{instance}");
 
-        // Since FRP and TimeStamper are new unfrozen HALs, we should only register them if they are declared.
-        // They will not be declared if `RELEASE_AIDL_USE_UNFROZEN` is false. See
+        // Since TimeStamper is a new unfrozen HAL, we should only register it if it is declared.
+        // It will not be declared if `RELEASE_AIDL_USE_UNFROZEN` is false. See
         // https://source.android.com/docs/core/architecture/aidl/stable-aidl#new-vintf-interfaces.
-        // TODO(b/447887816): Remove the check for FRP declaration once the interface is frozen.
         // TODO(b/455591722): Remove the check for TimeStamper declaration once the interface is frozen.
         if is_unfrozen_hal(*hal)
             && !binder::is_declared(&service_name)
@@ -444,5 +443,5 @@ fn is_unfrozen_hal(_hal: Hal) -> bool {
 
 #[cfg(feature = "hal_v5")]
 fn is_unfrozen_hal(hal: Hal) -> bool {
-    matches!(hal, Hal::FactoryResetProtection | Hal::TimeStamper)
+    matches!(hal, Hal::TimeStamper)
 }
