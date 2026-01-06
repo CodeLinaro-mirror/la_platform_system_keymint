@@ -422,8 +422,8 @@ pub struct AuthorizationList<'a> {
     /// Whether to include `UserSecureId` value if found in `auths` when encoding.
     pub encode_sid: bool,
     pub keygen_params: Cow<'a, [KeyParam]>,
-    pub rot_info: Option<KeyParam>,
-    pub app_id: Option<KeyParam>,
+    pub rot_info: Option<Vec<u8>>,
+    pub app_id: Option<Cow<'a, [u8]>>,
     pub additional_attestation_info: Cow<'a, [KeyParam]>,
 }
 
@@ -573,11 +573,8 @@ impl<'a> AuthorizationList<'a> {
             auths: auths.into(),
             encode_sid: false,
             keygen_params: keygen_params.into(),
-            rot_info: encoded_rot.map(KeyParam::RootOfTrust),
-            app_id: match app_id {
-                Some(app_id) => Some(KeyParam::AttestationApplicationId(try_to_vec(app_id)?)),
-                None => None,
-            },
+            rot_info: encoded_rot,
+            app_id: app_id.map(Into::into),
             additional_attestation_info: additional_attestation_info.into(),
         })
     }
@@ -598,15 +595,15 @@ impl<'a> AuthorizationList<'a> {
     fn new_from_key_params(key_params: Vec<KeyParam>) -> Result<Self, der::Error> {
         let mut auths = Vec::new();
         let mut keygen_params = Vec::new();
-        let mut rot: Option<KeyParam> = None;
-        let mut attest_app_id: Option<KeyParam> = None;
+        let mut rot: Option<Vec<u8>> = None;
+        let mut attest_app_id: Option<Cow<'a, [u8]>> = None;
         let mut additional_attestation_info = Vec::new();
 
         // Divide key parameters into key characteristics and key generation parameters.
         for param in key_params {
             match param {
-                KeyParam::RootOfTrust(_) => rot = Some(param),
-                KeyParam::AttestationApplicationId(_) => attest_app_id = Some(param),
+                KeyParam::RootOfTrust(encoded_rot) => rot = Some(encoded_rot),
+                KeyParam::AttestationApplicationId(app_id) => attest_app_id = Some(app_id.into()),
                 KeyParam::AttestationIdBrand(_)
                 | KeyParam::AttestationIdDevice(_)
                 | KeyParam::AttestationIdProduct(_)
@@ -994,10 +991,7 @@ macro_rules! asn1_set_of_integer {
                     set.insert_ordered(val)?;
                     prev_val = Some(val);
                 }
-                Some(ExplicitTaggedValue {
-                    tag: raw_tag_value(Tag::$variant),
-                    val: set,
-                })
+                Some(ExplicitTaggedValue::new(Tag::$variant, set))
             } else {
                 None
             }
@@ -1010,10 +1004,7 @@ macro_rules! asn1_integer {
             log::warn!("failed to get {} value for ext", stringify!($variant));
             der::Error::new(der::ErrorKind::Failed, der::Length::ZERO)
         })? {
-            Some(ExplicitTaggedValue {
-                tag: raw_tag_value(Tag::$variant),
-                val: *val as i64
-            })
+            Some(ExplicitTaggedValue::new(Tag::$variant, *val as i64))
         } else {
             None
         }
@@ -1025,10 +1016,7 @@ macro_rules! asn1_integer_newtype {
             log::warn!("failed to get {} value for ext", stringify!($variant));
             der::Error::new(der::ErrorKind::Failed, der::Length::ZERO)
         })? {
-            Some(ExplicitTaggedValue {
-                tag: raw_tag_value(Tag::$variant),
-                val: val.0 as i64
-            })
+            Some(ExplicitTaggedValue::new(Tag::$variant, val.0 as i64))
         } else {
             None
         }
@@ -1040,10 +1028,7 @@ macro_rules! asn1_integer_datetime {
             log::warn!("failed to get {} value for ext", stringify!($variant));
             der::Error::new(der::ErrorKind::Failed, der::Length::ZERO)
         })? {
-            Some(ExplicitTaggedValue {
-                tag: raw_tag_value(Tag::$variant),
-                val: val.ms_since_epoch
-            })
+            Some(ExplicitTaggedValue::new(Tag::$variant, val.ms_since_epoch))
         } else {
             None
         }
@@ -1055,10 +1040,7 @@ macro_rules! asn1_null {
             log::warn!("failed to get {} value for ext", stringify!($variant));
             der::Error::new(der::ErrorKind::Failed, der::Length::ZERO)
         })? {
-            Some(ExplicitTaggedValue {
-                tag: raw_tag_value(Tag::$variant),
-                val: ()
-            })
+            Some(ExplicitTaggedValue::new(Tag::$variant, ()))
         } else {
             None
         }
@@ -1070,10 +1052,7 @@ macro_rules! asn1_octet_string {
             log::warn!("failed to get {} value for ext", stringify!($variant));
             der::Error::new(der::ErrorKind::Failed, der::Length::ZERO)
         })? {
-            Some(ExplicitTaggedValue {
-                tag: raw_tag_value(Tag::$variant),
-                val: der::asn1::OctetStringRef::new(val)?,
-            })
+            Some(ExplicitTaggedValue::new(Tag::$variant, OctetStringRef::new(val)?))
         } else {
             None
         }
@@ -1084,10 +1063,9 @@ fn asn1_val<T: Encode>(
     val: Option<ExplicitTaggedValue<T>>,
     writer: &mut impl der::Writer,
 ) -> der::Result<()> {
-    if let Some(val) = val {
-        val.encode(writer)
-    } else {
-        Ok(())
+    match val {
+        Some(val) => val.encode(writer),
+        None => Ok(()),
     }
 }
 
@@ -1134,23 +1112,23 @@ impl EncodeValue for AuthorizationList<'_> {
             + asn1_len(asn1_null!(self.auths, UnlockedDeviceRequired))?
             + asn1_len(asn1_integer_datetime!(self.auths, CreationDatetime))?
             + asn1_len(asn1_integer!(self.auths, Origin))?;
-        if let Some(KeyParam::RootOfTrust(encoded_rot_info)) = &self.rot_info {
+        if let Some(encoded_rot_info) = &self.rot_info {
             length = length
-                + ExplicitTaggedValue {
-                    tag: raw_tag_value(Tag::RootOfTrust),
-                    val: RootOfTrust::from_der(encoded_rot_info.as_slice())?,
-                }
+                + ExplicitTaggedValue::new(
+                    Tag::RootOfTrust,
+                    RootOfTrust::from_der(encoded_rot_info.as_slice())?,
+                )
                 .encoded_len()?;
         }
         length = length
             + asn1_len(asn1_integer!(self.auths, OsVersion))?
             + asn1_len(asn1_integer!(self.auths, OsPatchlevel))?;
-        if let Some(KeyParam::AttestationApplicationId(app_id)) = &self.app_id {
+        if let Some(app_id) = &self.app_id {
             length = length
-                + ExplicitTaggedValue {
-                    tag: raw_tag_value(Tag::AttestationApplicationId),
-                    val: der::asn1::OctetStringRef::new(app_id.as_slice())?,
-                }
+                + ExplicitTaggedValue::new(
+                    Tag::AttestationApplicationId,
+                    OctetStringRef::new(app_id)?,
+                )
                 .encoded_len()?;
         }
         length = length
@@ -1204,22 +1182,19 @@ impl EncodeValue for AuthorizationList<'_> {
         asn1_val(asn1_integer_datetime!(self.auths, CreationDatetime), writer)?;
         asn1_val(asn1_integer!(self.auths, Origin), writer)?;
         // Root of trust info is a special case (not in key characteristics).
-        if let Some(KeyParam::RootOfTrust(encoded_rot_info)) = &self.rot_info {
-            ExplicitTaggedValue {
-                tag: raw_tag_value(Tag::RootOfTrust),
-                val: RootOfTrust::from_der(encoded_rot_info.as_slice())?,
-            }
+        if let Some(encoded_rot_info) = &self.rot_info {
+            ExplicitTaggedValue::new(
+                Tag::RootOfTrust,
+                RootOfTrust::from_der(encoded_rot_info.as_slice())?,
+            )
             .encode(writer)?;
         }
         asn1_val(asn1_integer!(self.auths, OsVersion), writer)?;
         asn1_val(asn1_integer!(self.auths, OsPatchlevel), writer)?;
         // Attestation application ID is a special case (not in key characteristics).
-        if let Some(KeyParam::AttestationApplicationId(app_id)) = &self.app_id {
-            ExplicitTaggedValue {
-                tag: raw_tag_value(Tag::AttestationApplicationId),
-                val: der::asn1::OctetStringRef::new(app_id.as_slice())?,
-            }
-            .encode(writer)?;
+        if let Some(app_id) = &self.app_id {
+            ExplicitTaggedValue::new(Tag::AttestationApplicationId, OctetStringRef::new(app_id)?)
+                .encode(writer)?;
         }
         // Accuracy of attestation IDs has already been checked, so just copy across.
         asn1_val(asn1_octet_string!(&self.keygen_params, AttestationIdBrand), writer)?;
@@ -1245,6 +1220,10 @@ struct ExplicitTaggedValue<T: Encode> {
 }
 
 impl<T: Encode> ExplicitTaggedValue<T> {
+    fn new(tag: Tag, val: T) -> ExplicitTaggedValue<T> {
+        ExplicitTaggedValue { tag: raw_tag_value(tag), val }
+    }
+
     fn explicit_tag_len(&self) -> der::Result<der::Length> {
         match self.tag {
             0..=0x1e => Ok(der::Length::ONE),
