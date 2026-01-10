@@ -266,7 +266,7 @@ pub(crate) fn basic_constraints_ext_value(ca_required: bool) -> BasicConstraints
 /// }
 /// ```
 #[derive(Debug, Clone, Sequence, PartialEq)]
-pub struct AttestationExtension<'a> {
+pub(crate) struct AttestationExtension<'a> {
     attestation_version: i32,
     attestation_security_level: SecurityLevel,
     keymint_version: i32,
@@ -421,10 +421,10 @@ pub struct AuthorizationList<'a> {
     pub auths: Cow<'a, [KeyParam]>,
     /// Whether to include `UserSecureId` value if found in `auths` when encoding.
     pub encode_sid: bool,
-    pub keygen_params: Cow<'a, [KeyParam]>,
+    pub ids: AttestationIds<'a>,
     pub rot_info: Option<Vec<u8>>,
     pub app_id: Option<Cow<'a, [u8]>>,
-    pub additional_attestation_info: Cow<'a, [KeyParam]>,
+    pub module_hash: Option<Cow<'a, [u8]>>,
 }
 
 /// Tags used in `AuthorizationList` in the schema-defined order.
@@ -476,45 +476,102 @@ const AUTHORIZATION_LIST_TAGS: &[Tag] = &[
     Tag::ModuleHash,
 ];
 
-/// Macro to check that a specified attestation ID matches the provisioned value.
-macro_rules! check_attestation_id {
-    {
-        $params:expr, $variant:ident, $mustmatch:expr
-    } => {
-        {
-            if let Some(val) = get_opt_tag_value!($params, $variant)? {
-                match $mustmatch {
-                    None => return Err(km_err!(CannotAttestIds,
-                                               "no attestation IDs provisioned")),
-                    Some(want)  => if val != want {
-                        return Err(km_err!(CannotAttestIds,
-                                           "attestation ID mismatch for {}",
-                                           stringify!($variant)))
-                    }
-                }
-            }
-        }
-    }
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AttestationIds<'a> {
+    brand: Option<Cow<'a, [u8]>>,
+    device: Option<Cow<'a, [u8]>>,
+    product: Option<Cow<'a, [u8]>>,
+    serial: Option<Cow<'a, [u8]>>,
+    imei: Option<Cow<'a, [u8]>>,
+    imei2: Option<Cow<'a, [u8]>>,
+    meid: Option<Cow<'a, [u8]>>,
+    manufacturer: Option<Cow<'a, [u8]>>,
+    model: Option<Cow<'a, [u8]>>,
 }
 
-/// Macro to check that a specified attestation ID matches one of two provisioned values.
-macro_rules! check_attestation_id_either {
-    {
-        $params:expr, $variant:ident, $mustmatch:expr
-    } => {
-        {
-            if let Some(val) = get_opt_tag_value!($params, $variant)? {
-                match $mustmatch {
-                    None => return Err(km_err!(CannotAttestIds,
-                                               "no attestation IDs provisioned")),
-                    Some((want1, want2)) => if val != want1 && val != want2 {
-                        return Err(km_err!(CannotAttestIds,
-                                           "attestation ID mismatch for {}",
-                                           stringify!($variant)))
-                    }
-                }
+impl AttestationIds<'_> {
+    fn new_from_key_params<'a>(keygen_params: &'a [KeyParam]) -> Result<AttestationIds<'a>, Error> {
+        let mut ids = AttestationIds::default();
+        for param in keygen_params {
+            match param {
+                KeyParam::AttestationIdBrand(v) => match ids.brand {
+                    Some(_) => return Err(km_err!(InvalidTag, "duplicate tag brand")),
+                    None => ids.brand = Some(v.into()),
+                },
+                KeyParam::AttestationIdDevice(v) => match ids.device {
+                    Some(_) => return Err(km_err!(InvalidTag, "duplicate tag device")),
+                    None => ids.device = Some(v.into()),
+                },
+                KeyParam::AttestationIdProduct(v) => match ids.product {
+                    Some(_) => return Err(km_err!(InvalidTag, "duplicate tag product")),
+                    None => ids.product = Some(v.into()),
+                },
+                KeyParam::AttestationIdSerial(v) => match ids.serial {
+                    Some(_) => return Err(km_err!(InvalidTag, "duplicate tag serial")),
+                    None => ids.serial = Some(v.into()),
+                },
+                KeyParam::AttestationIdImei(v) => match ids.imei {
+                    Some(_) => return Err(km_err!(InvalidTag, "duplicate tag imei")),
+                    None => ids.imei = Some(v.into()),
+                },
+                KeyParam::AttestationIdSecondImei(v) => match ids.imei2 {
+                    Some(_) => return Err(km_err!(InvalidTag, "duplicate tag imei2")),
+                    None => ids.imei2 = Some(v.into()),
+                },
+                KeyParam::AttestationIdMeid(v) => match ids.meid {
+                    Some(_) => return Err(km_err!(InvalidTag, "duplicate tag meid")),
+                    None => ids.meid = Some(v.into()),
+                },
+                KeyParam::AttestationIdManufacturer(v) => match ids.manufacturer {
+                    Some(_) => return Err(km_err!(InvalidTag, "duplicate tag manufacturer")),
+                    None => ids.manufacturer = Some(v.into()),
+                },
+                KeyParam::AttestationIdModel(v) => match ids.model {
+                    Some(_) => return Err(km_err!(InvalidTag, "duplicate tag model")),
+                    None => ids.model = Some(v.into()),
+                },
+                // Ignore all others.
+                _ => (),
             }
         }
+        Ok(ids)
+    }
+
+    fn is_empty(&self) -> bool {
+        *self == AttestationIds::default()
+    }
+
+    fn check_match(&self, wanted: &crate::AttestationIdInfo) -> Result<(), Error> {
+        if self.brand.as_ref().is_some_and(|brand| *brand != wanted.brand) {
+            return Err(km_err!(CannotAttestIds, "attestation ID mismatch for brand"));
+        }
+        if self.device.as_ref().is_some_and(|device| *device != wanted.device) {
+            return Err(km_err!(CannotAttestIds, "attestation ID mismatch for device"));
+        }
+        if self.product.as_ref().is_some_and(|product| *product != wanted.product) {
+            return Err(km_err!(CannotAttestIds, "attestation ID mismatch for product"));
+        }
+        if self.serial.as_ref().is_some_and(|serial| *serial != wanted.serial) {
+            return Err(km_err!(CannotAttestIds, "attestation ID mismatch for serial"));
+        }
+        // The IMEI fields can match any valid IMEI value.
+        if self.imei.as_ref().is_some_and(|imei| *imei != wanted.imei && *imei != wanted.imei2) {
+            return Err(km_err!(CannotAttestIds, "attestation ID mismatch for imei"));
+        }
+        if self.imei2.as_ref().is_some_and(|imei2| *imei2 != wanted.imei2 && *imei2 != wanted.imei)
+        {
+            return Err(km_err!(CannotAttestIds, "attestation ID mismatch for imei2"));
+        }
+        if self.meid.as_ref().is_some_and(|meid| *meid != wanted.meid) {
+            return Err(km_err!(CannotAttestIds, "attestation ID mismatch for meid"));
+        }
+        if self.manufacturer.as_ref().is_some_and(|mfr| *mfr != wanted.manufacturer) {
+            return Err(km_err!(CannotAttestIds, "attestation ID mismatch for manufacturer"));
+        }
+        if self.model.as_ref().is_some_and(|model| *model != wanted.model) {
+            return Err(km_err!(CannotAttestIds, "attestation ID mismatch for model"));
+        }
+        Ok(())
     }
 }
 
@@ -525,57 +582,31 @@ impl<'a> AuthorizationList<'a> {
     fn new(
         auths: &'a [KeyParam],
         keygen_params: &'a [KeyParam],
-        attestation_ids: Option<&'a crate::AttestationIdInfo>,
-        rot_info: Option<RootOfTrust<'a>>,
+        attestation_ids: Option<&crate::AttestationIdInfo>,
+        rot_info: Option<RootOfTrust>,
         app_id: Option<&'a [u8]>,
         additional_attestation_info: &'a [KeyParam],
     ) -> Result<Self, Error> {
-        check_attestation_id!(keygen_params, AttestationIdBrand, attestation_ids.map(|v| &v.brand));
-        check_attestation_id!(
-            keygen_params,
-            AttestationIdDevice,
-            attestation_ids.map(|v| &v.device)
-        );
-        check_attestation_id!(
-            keygen_params,
-            AttestationIdProduct,
-            attestation_ids.map(|v| &v.product)
-        );
-        check_attestation_id!(
-            keygen_params,
-            AttestationIdSerial,
-            attestation_ids.map(|v| &v.serial)
-        );
-        check_attestation_id_either!(
-            keygen_params,
-            AttestationIdImei,
-            attestation_ids.map(|v| (&v.imei, &v.imei2))
-        );
-        check_attestation_id_either!(
-            keygen_params,
-            AttestationIdSecondImei,
-            attestation_ids.map(|v| (&v.imei, &v.imei2))
-        );
-        check_attestation_id!(keygen_params, AttestationIdMeid, attestation_ids.map(|v| &v.meid));
-        check_attestation_id!(
-            keygen_params,
-            AttestationIdManufacturer,
-            attestation_ids.map(|v| &v.manufacturer)
-        );
-        check_attestation_id!(keygen_params, AttestationIdModel, attestation_ids.map(|v| &v.model));
-
+        let requested_ids = AttestationIds::new_from_key_params(keygen_params)?;
+        if !requested_ids.is_empty() {
+            match attestation_ids {
+                None => return Err(km_err!(CannotAttestIds, "no attestation IDs provisioned")),
+                Some(attestation_ids) => requested_ids.check_match(attestation_ids)?,
+            }
+        }
         let encoded_rot = if let Some(rot) = rot_info {
             Some(rot.to_der().map_err(|e| der_err!(e, "failed to encode RoT"))?)
         } else {
             None
         };
+        let module_hash = get_opt_tag_value!(additional_attestation_info, ModuleHash)?;
         Ok(Self {
             auths: auths.into(),
             encode_sid: false,
-            keygen_params: keygen_params.into(),
+            ids: requested_ids,
             rot_info: encoded_rot,
             app_id: app_id.map(Into::into),
-            additional_attestation_info: additional_attestation_info.into(),
+            module_hash: module_hash.map(Into::into),
         })
     }
 
@@ -594,40 +625,36 @@ impl<'a> AuthorizationList<'a> {
     /// decoding the attestation extension from an X.509 certificate.
     fn new_from_key_params(key_params: Vec<KeyParam>) -> Result<Self, der::Error> {
         let mut auths = Vec::new();
-        let mut keygen_params = Vec::new();
+        let mut ids = AttestationIds::default();
         let mut rot: Option<Vec<u8>> = None;
         let mut attest_app_id: Option<Cow<'a, [u8]>> = None;
-        let mut additional_attestation_info = Vec::new();
+        let mut module_hash: Option<Cow<'a, [u8]>> = None;
 
         // Divide key parameters into key characteristics and key generation parameters.
         for param in key_params {
             match param {
                 KeyParam::RootOfTrust(encoded_rot) => rot = Some(encoded_rot),
                 KeyParam::AttestationApplicationId(app_id) => attest_app_id = Some(app_id.into()),
-                KeyParam::AttestationIdBrand(_)
-                | KeyParam::AttestationIdDevice(_)
-                | KeyParam::AttestationIdProduct(_)
-                | KeyParam::AttestationIdSerial(_)
-                | KeyParam::AttestationIdImei(_)
-                | KeyParam::AttestationIdSecondImei(_)
-                | KeyParam::AttestationIdMeid(_)
-                | KeyParam::AttestationIdManufacturer(_)
-                | KeyParam::AttestationIdModel(_) => {
-                    keygen_params.try_push(param).map_err(der_alloc_err)?
-                }
-                KeyParam::ModuleHash(_) => {
-                    additional_attestation_info.try_push(param).map_err(der_alloc_err)?
-                }
+                KeyParam::AttestationIdBrand(v) => ids.brand = Some(v.into()),
+                KeyParam::AttestationIdDevice(v) => ids.device = Some(v.into()),
+                KeyParam::AttestationIdProduct(v) => ids.product = Some(v.into()),
+                KeyParam::AttestationIdSerial(v) => ids.serial = Some(v.into()),
+                KeyParam::AttestationIdImei(v) => ids.imei = Some(v.into()),
+                KeyParam::AttestationIdSecondImei(v) => ids.imei2 = Some(v.into()),
+                KeyParam::AttestationIdMeid(v) => ids.meid = Some(v.into()),
+                KeyParam::AttestationIdManufacturer(v) => ids.manufacturer = Some(v.into()),
+                KeyParam::AttestationIdModel(v) => ids.model = Some(v.into()),
+                KeyParam::ModuleHash(hash) => module_hash = Some(hash.into()),
                 _ => auths.try_push(param).map_err(der_alloc_err)?,
             }
         }
         Ok(AuthorizationList {
             auths: auths.into(),
             encode_sid: true,
-            keygen_params: keygen_params.into(),
+            ids,
             rot_info: rot,
             app_id: attest_app_id,
-            additional_attestation_info: additional_attestation_info.into(),
+            module_hash,
         })
     }
 }
@@ -649,10 +676,10 @@ impl<'a> der::DecodeValue<'a> for AuthorizationList<'a> {
             return Ok(AuthorizationList {
                 auths: Vec::new().into(),
                 encode_sid: true,
-                keygen_params: Vec::new().into(),
+                ids: AttestationIds::default(),
                 rot_info: None,
                 app_id: None,
-                additional_attestation_info: Vec::new().into(),
+                module_hash: None,
             });
         }
         if decoder.remaining_len() < header.length {
@@ -1046,16 +1073,24 @@ macro_rules! asn1_null {
         }
     }
 }
-macro_rules! asn1_octet_string {
-    { $params:expr, $variant:ident } => {
-        if let Some(val) = get_opt_tag_value!($params.as_ref(), $variant).map_err(|_e| {
-            log::warn!("failed to get {} value for ext", stringify!($variant));
-            der::Error::new(der::ErrorKind::Failed, der::Length::ZERO)
-        })? {
-            Some(ExplicitTaggedValue::new(Tag::$variant, OctetStringRef::new(val)?))
-        } else {
-            None
-        }
+
+fn asn1_octet_string(
+    tag: Tag,
+    val: Option<&[u8]>,
+) -> der::Result<Option<ExplicitTaggedValue<OctetStringRef<'_>>>> {
+    match val {
+        Some(val) => Ok(Some(ExplicitTaggedValue::new(tag, OctetStringRef::new(val)?))),
+        None => Ok(None),
+    }
+}
+
+fn asn1_root_of_trust(
+    tag: Tag,
+    rot: Option<&[u8]>,
+) -> der::Result<Option<ExplicitTaggedValue<RootOfTrust<'_>>>> {
+    match rot {
+        Some(rot) => Ok(Some(ExplicitTaggedValue::new(tag, RootOfTrust::from_der(rot)?))),
+        None => Ok(None),
     }
 }
 
@@ -1080,7 +1115,7 @@ impl<'a> Sequence<'a> for AuthorizationList<'a> {}
 
 impl EncodeValue for AuthorizationList<'_> {
     fn value_len(&self) -> der::Result<Length> {
-        let mut length = asn1_len(asn1_set_of_integer!(self.auths, Purpose))?
+        asn1_len(asn1_set_of_integer!(self.auths, Purpose))?
             + asn1_len(asn1_integer!(self.auths, Algorithm))?
             + asn1_len(asn1_integer_newtype!(self.auths, KeySize))?
             + asn1_len(asn1_set_of_integer!(self.auths, BlockMode))?
@@ -1111,41 +1146,27 @@ impl EncodeValue for AuthorizationList<'_> {
             + asn1_len(asn1_null!(self.auths, TrustedConfirmationRequired))?
             + asn1_len(asn1_null!(self.auths, UnlockedDeviceRequired))?
             + asn1_len(asn1_integer_datetime!(self.auths, CreationDatetime))?
-            + asn1_len(asn1_integer!(self.auths, Origin))?;
-        if let Some(encoded_rot_info) = &self.rot_info {
-            length = length
-                + ExplicitTaggedValue::new(
-                    Tag::RootOfTrust,
-                    RootOfTrust::from_der(encoded_rot_info.as_slice())?,
-                )
-                .encoded_len()?;
-        }
-        length = length
+            + asn1_len(asn1_integer!(self.auths, Origin))?
+            + asn1_len(asn1_root_of_trust(Tag::RootOfTrust, self.rot_info.as_deref())?)?
             + asn1_len(asn1_integer!(self.auths, OsVersion))?
-            + asn1_len(asn1_integer!(self.auths, OsPatchlevel))?;
-        if let Some(app_id) = &self.app_id {
-            length = length
-                + ExplicitTaggedValue::new(
-                    Tag::AttestationApplicationId,
-                    OctetStringRef::new(app_id)?,
-                )
-                .encoded_len()?;
-        }
-        length = length
-            + asn1_len(asn1_octet_string!(&self.keygen_params, AttestationIdBrand))?
-            + asn1_len(asn1_octet_string!(&self.keygen_params, AttestationIdDevice))?
-            + asn1_len(asn1_octet_string!(&self.keygen_params, AttestationIdProduct))?
-            + asn1_len(asn1_octet_string!(&self.keygen_params, AttestationIdSerial))?
-            + asn1_len(asn1_octet_string!(&self.keygen_params, AttestationIdImei))?
-            + asn1_len(asn1_octet_string!(&self.keygen_params, AttestationIdMeid))?
-            + asn1_len(asn1_octet_string!(&self.keygen_params, AttestationIdManufacturer))?
-            + asn1_len(asn1_octet_string!(&self.keygen_params, AttestationIdModel))?
+            + asn1_len(asn1_integer!(self.auths, OsPatchlevel))?
+            + asn1_len(asn1_octet_string(Tag::AttestationApplicationId, self.app_id.as_deref())?)?
+            + asn1_len(asn1_octet_string(Tag::AttestationIdBrand, self.ids.brand.as_deref())?)?
+            + asn1_len(asn1_octet_string(Tag::AttestationIdDevice, self.ids.device.as_deref())?)?
+            + asn1_len(asn1_octet_string(Tag::AttestationIdProduct, self.ids.product.as_deref())?)?
+            + asn1_len(asn1_octet_string(Tag::AttestationIdSerial, self.ids.serial.as_deref())?)?
+            + asn1_len(asn1_octet_string(Tag::AttestationIdImei, self.ids.imei.as_deref())?)?
+            + asn1_len(asn1_octet_string(Tag::AttestationIdMeid, self.ids.meid.as_deref())?)?
+            + asn1_len(asn1_octet_string(
+                Tag::AttestationIdManufacturer,
+                self.ids.manufacturer.as_deref(),
+            )?)?
+            + asn1_len(asn1_octet_string(Tag::AttestationIdModel, self.ids.model.as_deref())?)?
             + asn1_len(asn1_integer!(self.auths, VendorPatchlevel))?
             + asn1_len(asn1_integer!(self.auths, BootPatchlevel))?
             + asn1_len(asn1_null!(self.auths, DeviceUniqueAttestation))?
-            + asn1_len(asn1_octet_string!(&self.keygen_params, AttestationIdSecondImei))?
-            + asn1_len(asn1_octet_string!(&self.additional_attestation_info, ModuleHash))?;
-        length
+            + asn1_len(asn1_octet_string(Tag::AttestationIdSecondImei, self.ids.imei2.as_deref())?)?
+            + asn1_len(asn1_octet_string(Tag::ModuleHash, self.module_hash.as_deref())?)?
     }
 
     fn encode_value(&self, writer: &mut impl der::Writer) -> der::Result<()> {
@@ -1182,34 +1203,37 @@ impl EncodeValue for AuthorizationList<'_> {
         asn1_val(asn1_integer_datetime!(self.auths, CreationDatetime), writer)?;
         asn1_val(asn1_integer!(self.auths, Origin), writer)?;
         // Root of trust info is a special case (not in key characteristics).
-        if let Some(encoded_rot_info) = &self.rot_info {
-            ExplicitTaggedValue::new(
-                Tag::RootOfTrust,
-                RootOfTrust::from_der(encoded_rot_info.as_slice())?,
-            )
-            .encode(writer)?;
-        }
+        asn1_val(asn1_root_of_trust(Tag::RootOfTrust, self.rot_info.as_deref())?, writer)?;
         asn1_val(asn1_integer!(self.auths, OsVersion), writer)?;
         asn1_val(asn1_integer!(self.auths, OsPatchlevel), writer)?;
         // Attestation application ID is a special case (not in key characteristics).
-        if let Some(app_id) = &self.app_id {
-            ExplicitTaggedValue::new(Tag::AttestationApplicationId, OctetStringRef::new(app_id)?)
-                .encode(writer)?;
-        }
+        asn1_val(
+            asn1_octet_string(Tag::AttestationApplicationId, self.app_id.as_deref())?,
+            writer,
+        )?;
         // Accuracy of attestation IDs has already been checked, so just copy across.
-        asn1_val(asn1_octet_string!(&self.keygen_params, AttestationIdBrand), writer)?;
-        asn1_val(asn1_octet_string!(&self.keygen_params, AttestationIdDevice), writer)?;
-        asn1_val(asn1_octet_string!(&self.keygen_params, AttestationIdProduct), writer)?;
-        asn1_val(asn1_octet_string!(&self.keygen_params, AttestationIdSerial), writer)?;
-        asn1_val(asn1_octet_string!(&self.keygen_params, AttestationIdImei), writer)?;
-        asn1_val(asn1_octet_string!(&self.keygen_params, AttestationIdMeid), writer)?;
-        asn1_val(asn1_octet_string!(&self.keygen_params, AttestationIdManufacturer), writer)?;
-        asn1_val(asn1_octet_string!(&self.keygen_params, AttestationIdModel), writer)?;
+        asn1_val(asn1_octet_string(Tag::AttestationIdBrand, self.ids.brand.as_deref())?, writer)?;
+        asn1_val(asn1_octet_string(Tag::AttestationIdDevice, self.ids.device.as_deref())?, writer)?;
+        asn1_val(
+            asn1_octet_string(Tag::AttestationIdProduct, self.ids.product.as_deref())?,
+            writer,
+        )?;
+        asn1_val(asn1_octet_string(Tag::AttestationIdSerial, self.ids.serial.as_deref())?, writer)?;
+        asn1_val(asn1_octet_string(Tag::AttestationIdImei, self.ids.imei.as_deref())?, writer)?;
+        asn1_val(asn1_octet_string(Tag::AttestationIdMeid, self.ids.meid.as_deref())?, writer)?;
+        asn1_val(
+            asn1_octet_string(Tag::AttestationIdManufacturer, self.ids.manufacturer.as_deref())?,
+            writer,
+        )?;
+        asn1_val(asn1_octet_string(Tag::AttestationIdModel, self.ids.model.as_deref())?, writer)?;
         asn1_val(asn1_integer!(self.auths, VendorPatchlevel), writer)?;
         asn1_val(asn1_integer!(self.auths, BootPatchlevel), writer)?;
         asn1_val(asn1_null!(self.auths, DeviceUniqueAttestation), writer)?;
-        asn1_val(asn1_octet_string!(&self.keygen_params, AttestationIdSecondImei), writer)?;
-        asn1_val(asn1_octet_string!(&self.additional_attestation_info, ModuleHash), writer)?;
+        asn1_val(
+            asn1_octet_string(Tag::AttestationIdSecondImei, self.ids.imei2.as_deref())?,
+            writer,
+        )?;
+        asn1_val(asn1_octet_string(Tag::ModuleHash, self.module_hash.as_deref())?, writer)?;
         Ok(())
     }
 }
