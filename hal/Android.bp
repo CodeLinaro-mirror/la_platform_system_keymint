@@ -56,7 +56,6 @@ rust_library {
         "kmr_hal_defaults",
     ],
     rustlibs: [
-        "android.hardware.security.factory_reset_protection-V1-rust",
         "android.hardware.security.timestamp-V1-rust",
     ],
 }
@@ -140,7 +139,6 @@ rust_test {
         "kmr_hal_defaults",
     ],
     rustlibs: [
-        "android.hardware.security.factory_reset_protection-V1-rust",
         "android.hardware.security.timestamp-V1-rust",
         "libkmr_wire",
     ],

@@ -932,7 +932,13 @@ fn decode_tag_from_bytes<'a, R: der::Reader<'a>>(
         return Ok(None);
     }
     let b1 = decoder.read_byte()?;
-    let raw_tag = if b1 & 0xbfu8 == 0xbfu8 {
+    if b1 & 0b11100000 != 0b10100000 {
+        // KeyMint tags should be encoded as context-specific (0b10......) constructed
+        // (0b..1.....) ASN.1 tag values.
+        return Err(der::ErrorKind::TagNumberInvalid.into());
+    }
+    let b1 = b1 & 0b00011111u8;
+    let raw_tag = if b1 == 0b00011111u8 {
         // High tag form, read the next byte
         let b2 = decoder.read_byte()?;
         if b2 & 0x80u8 == 0x80u8 {
@@ -944,7 +950,7 @@ fn decode_tag_from_bytes<'a, R: der::Reader<'a>>(
             b2 as u32
         }
     } else {
-        (b1 ^ 0b10100000u8) as u32
+        b1 as u32
     };
     let tag = from_raw_tag_value(raw_tag);
     if tag == Tag::Invalid {
@@ -1641,5 +1647,57 @@ mod tests {
         )
         .unwrap();
         assert!(authorization_list.to_der().is_err());
+    }
+
+    #[test]
+    fn test_decode_tag_from_bytes() {
+        use der::Reader;
+        let tests = [
+            (
+                "a2", // context-specific constructed tag=2
+                Ok(Some(Tag::Algorithm)),
+            ),
+            (
+                "be", // context-specific constructed tag=30 (not a KeyMint tag value)
+                Err(der::ErrorKind::TagNumberInvalid.into()),
+            ),
+            (
+                "bf1f", // context-specific constructed tag=31 (not a KeyMint tag value)
+                Err(der::ErrorKind::TagNumberInvalid.into()),
+            ),
+            (
+                "bf8377", // context-specific constructed tag=503=0x1F7
+                Ok(Some(Tag::NoAuthRequired)),
+            ),
+            (
+                "9f8377", // context-specific *primitive* tag=503=0x1F7
+                Err(der::ErrorKind::TagNumberInvalid.into()),
+            ),
+            (
+                "7f8377", // *application* constructed tag=503=0x1F7
+                Err(der::ErrorKind::TagNumberInvalid.into()),
+            ),
+            (
+                "bfc000", // context-specific constructed tag=16384=0x4000
+                Err(der::ErrorKind::TagNumberInvalid.into()),
+            ),
+            (
+                "bf8148", // context-specific constructed tag=200=0xC8
+                Ok(Some(Tag::RsaPublicExponent)),
+            ),
+            (
+                "68", // application constructed tag=16
+                Err(der::ErrorKind::TagNumberInvalid.into()),
+            ),
+        ];
+        for (input_hex, want) in tests {
+            let input = hex::decode(input_hex).unwrap();
+            let mut reader = der::SliceReader::new(&input).unwrap();
+            let got = decode_tag_from_bytes(&mut reader);
+            assert_eq!(got, want, "for {input_hex}");
+            if got.is_ok() {
+                assert_eq!(reader.remaining_len(), der::Length::ZERO, "for {input_hex}");
+            }
+        }
     }
 }
