@@ -52,7 +52,6 @@ pub mod keys;
 mod operation;
 pub mod rkp;
 mod secret;
-pub mod timestamp;
 
 use keys::KeyImport;
 use operation::{OpHandle, Operation};
@@ -819,18 +818,6 @@ impl KeyMintTa {
                         GenerateTimeStampResponse { ret },
                     )),
                     Err(e) => op_error_rsp(GenerateTimeStampRequest::CODE, e),
-                }
-            }
-
-            // ITimestamp messages.
-            PerformOpReq::TimeStampGenerate(req) => {
-                match self.generate_timestamp_token(&req.encoded_req) {
-                    Ok(timestamp_token) => {
-                        op_ok_rsp(PerformOpRsp::TimeStampGenerate(TimeStampGenerateResponse {
-                            timestamp_token,
-                        }))
-                    }
-                    Err(e) => op_error_rsp(TimeStampGenerateRequest::CODE, e),
                 }
             }
 

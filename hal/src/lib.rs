@@ -48,8 +48,6 @@ pub mod keymint;
 pub mod rpc;
 pub mod secureclock;
 pub mod sharedsecret;
-#[cfg(feature = "hal_v5")]
-pub mod timestamp;
 
 #[cfg(test)]
 mod tests;
@@ -65,9 +63,6 @@ pub enum Hal {
     SecureClock,
     /// ISharedSecret HAL.
     SharedSecret,
-    #[cfg(feature = "hal_v5")]
-    /// ITimeStamper HAL.
-    TimeStamper,
 }
 
 impl fmt::Display for Hal {
@@ -80,8 +75,6 @@ impl fmt::Display for Hal {
             }
             Self::SecureClock => "android.hardware.security.secureclock.ISecureClock",
             Self::SharedSecret => "android.hardware.security.sharedsecret.ISharedSecret",
-            #[cfg(feature = "hal_v5")]
-            Self::TimeStamper => "android.hardware.security.timestamp.ITimeStamper",
         })
     }
 }
@@ -98,21 +91,13 @@ impl Hal {
             }
             Hal::SecureClock => secureclock::Device::new_as_binder(channel.clone()).as_binder(),
             Hal::SharedSecret => sharedsecret::Device::new_as_binder(channel.clone()).as_binder(),
-            #[cfg(feature = "hal_v5")]
-            Hal::TimeStamper => timestamp::Device::new_as_binder(channel.clone()),
         }
     }
 }
 
 /// A list of all HAL services that are registered by default.
-pub const ALL_HALS: &[Hal] = &[
-    Hal::KeyMintDevice,
-    Hal::RemotelyProvisionedComponent,
-    Hal::SecureClock,
-    Hal::SharedSecret,
-    #[cfg(feature = "hal_v5")]
-    Hal::TimeStamper,
-];
+pub const ALL_HALS: &[Hal] =
+    &[Hal::KeyMintDevice, Hal::RemotelyProvisionedComponent, Hal::SecureClock, Hal::SharedSecret];
 
 /// Emit a failure for a failed CBOR conversion.
 #[inline]
@@ -404,31 +389,9 @@ pub fn register_binder_services<T: SerializedChannel + 'static>(
     for hal in hals_to_register {
         let service_name = format!("{hal}/{instance}");
 
-        // Since TimeStamper is a new unfrozen HAL, we should only register it if it is declared.
-        // It will not be declared if `RELEASE_AIDL_USE_UNFROZEN` is false. See
-        // https://source.android.com/docs/core/architecture/aidl/stable-aidl#new-vintf-interfaces.
-        // TODO(b/455591722): Remove the check for TimeStamper declaration once the interface is frozen.
-        if is_unfrozen_hal(*hal)
-            && !binder::is_declared(&service_name)
-                .map_err(|e| format!("Failed to check if {service_name} is declared: {e:?}"))?
-        {
-            info!("Failed to register {service_name}. Not declared.");
-            continue;
-        }
-
         binder::add_service(&service_name, hal.new_binder(channel))
             .map_err(|e| format!("Failed to register service {service_name}: {e:?}"))?;
         info!("Successfully registered {service_name}");
     }
     Ok(())
-}
-
-#[cfg(not(feature = "hal_v5"))]
-fn is_unfrozen_hal(_hal: Hal) -> bool {
-    false
-}
-
-#[cfg(feature = "hal_v5")]
-fn is_unfrozen_hal(hal: Hal) -> bool {
-    matches!(hal, Hal::TimeStamper)
 }
