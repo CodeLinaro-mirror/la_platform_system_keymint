@@ -137,11 +137,12 @@ provides an example of all of the above.
 
 The bootloader is required to transmit root of trust and boot state information to the TA at start
 of day, so the TA can bind keys to the root of trust appropriately.  The bootloader should fill out
-and send a `kmr_wire::SetBootInfoRequest` message to do this.
+and send a `kmr_wire::SetBootInfoRequest` message to do this.  The contents of this message should
+be transmitted securely, even in the presence of a subverted version of Android userspace.
 
 **Checklist:**
 
-- [ ] Implementation of communication channel from bootloader to TA.
+- [ ] Implementation of secure communication channel from bootloader to TA.
 - [ ] Trigger for and population of `kmr_wire::SetBootInfoRequest` message.
 
 ### Authenticators
@@ -185,6 +186,9 @@ BoringSSL-based implementations are available for all of the above.
 The KeyMint TA requires implementations of traits that involve interaction with device-specific
 features or provisioned information, in the form of implementations of the various Rust traits held
 (mostly) in [`kmr_ta::device`](ta/src/device.rs).
+
+Provisioned information should be stored securely, in a manner that is resistant to reading or
+writing from Android userspace.
 
 **Checklist:**
 

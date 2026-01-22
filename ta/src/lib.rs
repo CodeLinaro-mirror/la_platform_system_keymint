@@ -588,9 +588,12 @@ impl KeyMintTa {
         }
     }
 
-    /// Configure the boot-specific root of trust info.  KeyMint implementors should call this
-    /// method when this information arrives from the bootloader (which happens in an
-    /// implementation-specific manner).
+    /// Configure the boot-specific root of trust info.
+    ///
+    /// KeyMint implementors should call this method when this information arrives from the
+    /// bootloader, which uses an implementation-specific mechanism.  This transfer mechanism should
+    /// be secure; the contents of the information should not be modifiable by a subverted
+    /// Android userspace.
     pub fn set_boot_info(&mut self, boot_info: keymint::BootInfo) -> Result<(), Error> {
         if !self.in_early_boot {
             error!("Rejecting attempt to set boot info {boot_info:?} after early boot");
