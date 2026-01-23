@@ -20,9 +20,6 @@ rust_defaults {
     name: "libkmr_crypto_boring_defaults",
     edition: "2021",
     lints: "android",
-    rlibs: [
-        "libbssl_crypto_mlalgs",
-    ],
     rustlibs: [
         "libbssl_sys",
         "libforeign_types",
