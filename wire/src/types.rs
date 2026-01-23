@@ -353,17 +353,6 @@ pub struct GenerateTimeStampResponse {
     pub ret: TimeStampToken,
 }
 
-// `ITimeStamper` methods.
-#[derive(Debug, AsCborValue)]
-pub struct TimeStampGenerateRequest {
-    pub encoded_req: Vec<u8>,
-}
-
-#[derive(Debug, AsCborValue)]
-pub struct TimeStampGenerateResponse {
-    pub timestamp_token: Vec<u8>,
-}
-
 // The following messages have no equivalent on a HAL interface, but are used internally
 // between components.
 
@@ -672,7 +661,6 @@ declare_req_rsp_enums! { KeyMintOperation  =>    (PerformOpReq, PerformOpRsp) {
     SetAttestationIds = 0x83 =>                        (SetAttestationIdsRequest, SetAttestationIdsResponse),
     SetHalVersion = 0x84 =>                            (SetHalVersionRequest, SetHalVersionResponse),
     SetAdditionalAttestationInfo = 0x91 =>             (SetAdditionalAttestationInfoRequest, SetAdditionalAttestationInfoResponse),
-    TimeStampGenerate = 0xB1 =>                        (TimeStampGenerateRequest, TimeStampGenerateResponse),
 } }
 
 /// Indicate whether an operation is part of the `IRemotelyProvisionedComponent` HAL.
