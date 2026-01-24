@@ -529,10 +529,7 @@ fn check_mldsa_gen_params(
     // For key generation, the variant must be explicitly specified.
     let variant = get_mldsa_variant(params)?;
 
-    let purpose = check_mldsa_params(params, sec_level)?;
-    if !matches!(purpose, Some(KeyPurpose::Sign) | Some(KeyPurpose::AttestKey)) {
-        return Err(km_err!(IncompatiblePurpose, "ML-DSA key with invalid purpose {purpose:?}"));
-    }
+    check_mldsa_params(params, sec_level)?;
     Ok(KeyGenInfo::MlDsa(variant))
 }
 
@@ -766,17 +763,13 @@ fn check_mldsa_import_params(
 }
 
 /// Check the parameter validity for an ML-DSA key that is about to be generated or imported.
-fn check_mldsa_params(
-    params: &[KeyParam],
-    sec_level: SecurityLevel,
-) -> Result<Option<KeyPurpose>, Error> {
+fn check_mldsa_params(params: &[KeyParam], sec_level: SecurityLevel) -> Result<(), Error> {
     if sec_level == SecurityLevel::Strongbox {
         return Err(km_err!(UnsupportedAlgorithm, "ML-DSA not supported for StrongBox"));
     }
 
     let mut seen_attest = false;
     let mut seen_sign = false;
-    let mut primary_purpose = None;
     for param in params {
         if let KeyParam::Purpose(purpose) = param {
             match purpose {
@@ -784,9 +777,6 @@ fn check_mldsa_params(
                 KeyPurpose::AttestKey => seen_attest = true,
                 KeyPurpose::Verify => {}
                 _ => warn!("Generating ML-DSA key with invalid purpose {purpose:?}"),
-            }
-            if primary_purpose.is_none() {
-                primary_purpose = Some(*purpose);
             }
         }
     }
@@ -799,7 +789,7 @@ fn check_mldsa_params(
         ));
     }
 
-    Ok(primary_purpose)
+    Ok(())
 }
 
 /// Check AES key generation parameter validity.
