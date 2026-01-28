@@ -285,9 +285,9 @@ pub trait Rsa: Send {
         mode: rsa::DecryptionMode,
     ) -> Result<Box<dyn AccumulatingOperation>, Error>;
 
-    /// Create an RSA signing operation.  For [`rsa::SignMode::Pkcs1_1_5Padding(Digest::None)`] the
-    /// implementation should reject (with `ErrorCode::InvalidInputLength`) accumulated input that
-    /// is larger than the size of the RSA key less overhead
+    /// Create an RSA signing operation.  For [`rsa::SignMode::Pkcs1_1_5Padding`]([`Digest::None`])
+    /// the implementation should reject (with `ErrorCode::InvalidInputLength`) accumulated input
+    /// that is larger than the size of the RSA key less overhead
     /// ([`rsa::PKCS1_UNDIGESTED_SIGNATURE_PADDING_OVERHEAD`]).
     fn begin_sign(
         &self,
