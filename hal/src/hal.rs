@@ -42,14 +42,10 @@ use log::{error, warn};
 use std::convert::TryFrom;
 use std::ffi::CString;
 
-#[cfg(feature = "hal_v5")]
-pub use android_hardware_security_factory_reset_protection::aidl::android::hardware::security::factory_reset_protection as frp;
 pub use android_hardware_security_keymint::aidl::android::hardware::security::keymint;
 pub use android_hardware_security_rkp::aidl::android::hardware::security::keymint as rkp;
 pub use android_hardware_security_secureclock::aidl::android::hardware::security::secureclock;
 pub use android_hardware_security_sharedsecret::aidl::android::hardware::security::sharedsecret;
-#[cfg(feature = "hal_v5")]
-pub use android_hardware_security_timestamp::aidl::android::hardware::security::timestamp;
 
 #[cfg(test)]
 mod tests;

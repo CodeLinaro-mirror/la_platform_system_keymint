@@ -33,7 +33,6 @@ use kmr_common::{
 };
 use kmr_wire::{
     coset::TaggedCborSerializable,
-    frp::ErrorCode as FrpErrorCode,
     keymint::{
         Digest, ErrorCode, HardwareAuthToken, KeyCharacteristics, KeyMintHardwareInfo, KeyOrigin,
         KeyParam, SecurityLevel, Tag, VerifiedBootState, NEXT_MESSAGE_SIGNAL_FALSE,
@@ -49,12 +48,10 @@ use log::{debug, error, info, trace, warn};
 mod cert;
 mod clock;
 pub mod device;
-mod frp;
 pub mod keys;
 mod operation;
 pub mod rkp;
 mod secret;
-pub mod timestamp;
 
 use keys::KeyImport;
 use operation::{OpHandle, Operation};
@@ -64,7 +61,7 @@ mod tests;
 
 /// Possible KeyMint HAL versions
 #[repr(i32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyMintHalVersion {
     /// V5 removes support for destroying attestation IDs, and adds support for ML-DSA and IMEI
     /// reordering.
@@ -187,9 +184,6 @@ pub struct KeyMintTa {
 
     /// Operation handle of the (single) in-flight operation that requires trusted user presence.
     presence_required_op: Option<OpHandle>,
-
-    /// True iff FRP is active.
-    frp_active: bool,
 }
 
 /// A helper method that can be used by the TA for processing the responses to be sent to the
@@ -345,12 +339,6 @@ impl KeyMintTa {
         } else {
             MAX_TEE_OPERATIONS
         };
-
-        // FRP is only supported from V5, and only if the FRP secret storage is implemented.
-        let frp_active =
-            KEYMINT_CURRENT_VERSION >= KeyMintHalVersion::V5 && dev.frp_secret_storage.is_some();
-        info!("FRP is enabled: {}", frp_active);
-
         Self {
             imp,
             dev,
@@ -373,7 +361,6 @@ impl KeyMintTa {
             attestation_id_info: RefCell::new(None),
             dice_info: RefCell::new(None),
             additional_attestation_info: Vec::new(),
-            frp_active,
         }
     }
 
@@ -600,9 +587,12 @@ impl KeyMintTa {
         }
     }
 
-    /// Configure the boot-specific root of trust info.  KeyMint implementors should call this
-    /// method when this information arrives from the bootloader (which happens in an
-    /// implementation-specific manner).
+    /// Configure the boot-specific root of trust info.
+    ///
+    /// KeyMint implementors should call this method when this information arrives from the
+    /// bootloader, which uses an implementation-specific mechanism.  This transfer mechanism should
+    /// be secure; the contents of the information should not be modifiable by a subverted
+    /// Android userspace.
     pub fn set_boot_info(&mut self, boot_info: keymint::BootInfo) -> Result<(), Error> {
         if !self.in_early_boot {
             error!("Rejecting attempt to set boot info {boot_info:?} after early boot");
@@ -624,18 +614,6 @@ impl KeyMintTa {
             }
         } else {
             info!("Setting boot_info to {boot_info:?}");
-
-            #[cfg(feature = "disable_frp_if_bootloader_unlocked")]
-            if let Some(frp_secret_storage) = &mut self.dev.frp_secret_storage {
-                // If the bootloader is unlocked, default the FRP secret.
-                if !boot_info.device_boot_locked {
-                    info!("Bootloader is unlocked, clearing FRP secret.");
-                    if let Err(e) = frp_secret_storage.store_secret([0; 32]) {
-                        error!("Failed to clear FRP secret: {e:?}");
-                    }
-                }
-            }
-
             let rot_info = RootOfTrustInfo {
                 verified_boot_key: boot_info.verified_boot_key.clone(),
                 device_boot_locked: boot_info.device_boot_locked,
@@ -714,8 +692,9 @@ impl KeyMintTa {
             if let Some(get_ids_impl) = self.dev.attest_ids.as_ref() {
                 // Attestation IDs are not populated, but we have a trait implementation that
                 // may provide them.
-                match get_ids_impl.get() {
-                    Ok(ids) => *self.attestation_id_info.borrow_mut() = Some(Rc::new(ids)),
+                match get_ids_impl.get_ids() {
+                    Ok(Some(ids)) => *self.attestation_id_info.borrow_mut() = Some(Rc::new(ids)),
+                    Ok(None) => warn!("Attestation IDs not yet available"),
                     Err(e) => error!("Failed to retrieve attestation IDs: {e:?}"),
                 }
             }
@@ -842,18 +821,6 @@ impl KeyMintTa {
                         GenerateTimeStampResponse { ret },
                     )),
                     Err(e) => op_error_rsp(GenerateTimeStampRequest::CODE, e),
-                }
-            }
-
-            // ITimestamp messages.
-            PerformOpReq::TimeStampGenerate(req) => {
-                match self.generate_timestamp_token(&req.encoded_req) {
-                    Ok(timestamp_token) => {
-                        op_ok_rsp(PerformOpRsp::TimeStampGenerate(TimeStampGenerateResponse {
-                            timestamp_token,
-                        }))
-                    }
-                    Err(e) => op_error_rsp(TimeStampGenerateRequest::CODE, e),
                 }
             }
 
@@ -1073,49 +1040,6 @@ impl KeyMintTa {
                     Err(e) => op_error_rsp(GenerateCertificateRequestV2Request::CODE, e),
                 }
             }
-            PerformOpReq::FrpIsActive(_req) => {
-                op_ok_rsp(PerformOpRsp::FrpIsActive(FrpIsActiveResponse {
-                    is_active: self.frp_active(),
-                }))
-            }
-            PerformOpReq::FrpActivate(_req) => match self.activate_frp() {
-                Ok(()) => op_ok_rsp(PerformOpRsp::FrpActivate(FrpActivateResponse {})),
-                Err(e) => op_error_rsp(FrpActivateRequest::CODE, e),
-            },
-            PerformOpReq::FrpDeactivate(req) => match self.deactivate_frp(req.candidate_secret) {
-                Ok(result) => {
-                    op_ok_rsp(PerformOpRsp::FrpDeactivate(FrpDeactivateResponse { result }))
-                }
-                Err(e) => op_error_rsp(FrpDeactivateRequest::CODE, e),
-            },
-            PerformOpReq::FrpSetSecret(req) => match self.set_frp_secret(req.new_secret) {
-                Ok(_ret) => op_ok_rsp(PerformOpRsp::FrpSetSecret(FrpSetSecretResponse {})),
-                Err(e) => op_error_rsp(FrpSetSecretRequest::CODE, e),
-            },
-            PerformOpReq::FrpGetSecret(_req) => match self.get_frp_secret() {
-                Ok(frp_secret) => {
-                    op_ok_rsp(PerformOpRsp::FrpGetSecret(FrpGetSecretResponse { frp_secret }))
-                }
-                Err(e) => op_error_rsp(FrpGetSecretRequest::CODE, e),
-            },
-            PerformOpReq::FrpStoreData(req) => match self.store_frp_data(&req.key, &req.data) {
-                Ok(_ret) => op_ok_rsp(PerformOpRsp::FrpStoreData(FrpStoreDataResponse {})),
-                Err(e) => op_error_rsp(FrpStoreDataRequest::CODE, e),
-            },
-            PerformOpReq::FrpRetrieveData(req) => match self.retrieve_frp_data(&req.key) {
-                Ok(data) => {
-                    op_ok_rsp(PerformOpRsp::FrpRetrieveData(FrpRetrieveDataResponse { data }))
-                }
-                Err(e) => op_error_rsp(FrpRetrieveDataRequest::CODE, e),
-            },
-            PerformOpReq::FrpDeleteData(req) => match self.delete_frp_data(&req.key) {
-                Ok(_ret) => op_ok_rsp(PerformOpRsp::FrpDeleteData(FrpDeleteDataResponse {})),
-                Err(e) => op_error_rsp(FrpDeleteDataRequest::CODE, e),
-            },
-            PerformOpReq::FrpDeleteAllData(_req) => match self.delete_all_frp_data() {
-                Ok(_ret) => op_ok_rsp(PerformOpRsp::FrpDeleteAllData(FrpDeleteAllDataResponse {})),
-                Err(e) => op_error_rsp(FrpDeleteAllDataRequest::CODE, e),
-            },
         }
     }
 
@@ -1409,34 +1333,19 @@ fn op_error_rsp(op: KeyMintOperation, err: Error) -> PerformOpResponse {
         // The IRemotelyProvisionedComponent HAL uses its own error space.
         let rpc_err: rpc::ErrorCode = match err.kind() {
             ErrorKind::Cbor(_) | ErrorKind::Der(_) | ErrorKind::Alloc(_) => rpc::ErrorCode::Failed,
-            ErrorKind::Hal(_, _) | ErrorKind::Frp(_, _) => {
+            ErrorKind::Hal(_, _) => {
                 error!("encountered non-RKP error on RKP method! {err:?}");
                 rpc::ErrorCode::Failed
             }
             ErrorKind::Rpc(e, _) => *e,
         };
         error_rsp(rpc_err as i32)
-    } else if kmr_wire::is_frp_operation(op) {
-        // The IFactoryResetProtection HAL uses its own error space.
-        let frp_err: FrpErrorCode = match err.kind() {
-            ErrorKind::Cbor(_) | ErrorKind::Der(_) | ErrorKind::Alloc(_) => FrpErrorCode::Failed,
-            ErrorKind::Hal(_, _) | ErrorKind::Rpc(_, _) => {
-                error!("encountered non-FRP error on FRP method! {err:?}");
-                FrpErrorCode::Failed
-            }
-            ErrorKind::Frp(e, _) => *e,
-        };
-        error_rsp(frp_err as i32)
     } else {
         let hal_err = match err.kind() {
             ErrorKind::Cbor(_) | ErrorKind::Der(_) => ErrorCode::InvalidArgument,
             ErrorKind::Hal(e, _) => *e,
             ErrorKind::Rpc(_, _) => {
                 error!("encountered RKP error on non-RKP method! {err:?}");
-                ErrorCode::InvalidArgument
-            }
-            ErrorKind::Frp(_, _) => {
-                error!("encountered FRP error on non-FRP method! {err:?}");
                 ErrorCode::InvalidArgument
             }
             ErrorKind::Alloc(_) => ErrorCode::MemoryAllocationFailed,

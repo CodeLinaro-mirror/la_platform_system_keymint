@@ -353,74 +353,6 @@ pub struct GenerateTimeStampResponse {
     pub ret: TimeStampToken,
 }
 
-// IFactoryResetProtection methods.
-#[derive(Debug, AsCborValue)]
-pub struct FrpIsActiveRequest {}
-#[derive(Debug, AsCborValue)]
-pub struct FrpIsActiveResponse {
-    pub is_active: bool,
-}
-#[derive(Debug, AsCborValue)]
-pub struct FrpActivateRequest {}
-#[derive(Debug, AsCborValue)]
-pub struct FrpActivateResponse {}
-#[derive(Debug, AsCborValue)]
-pub struct FrpDeactivateRequest {
-    pub candidate_secret: [u8; 32],
-}
-#[derive(Debug, AsCborValue)]
-pub struct FrpDeactivateResponse {
-    pub result: bool,
-}
-#[derive(Debug, AsCborValue)]
-pub struct FrpSetSecretRequest {
-    pub new_secret: [u8; 32],
-}
-#[derive(Debug, AsCborValue)]
-pub struct FrpSetSecretResponse {}
-#[derive(Debug, AsCborValue)]
-pub struct FrpGetSecretRequest {}
-#[derive(Debug, AsCborValue)]
-pub struct FrpGetSecretResponse {
-    pub frp_secret: [u8; 32],
-}
-#[derive(Debug, AsCborValue)]
-pub struct FrpStoreDataRequest {
-    pub key: String,
-    pub data: Vec<u8>,
-}
-#[derive(Debug, AsCborValue)]
-pub struct FrpStoreDataResponse {}
-#[derive(Debug, AsCborValue)]
-pub struct FrpRetrieveDataRequest {
-    pub key: String,
-}
-#[derive(Debug, AsCborValue)]
-pub struct FrpRetrieveDataResponse {
-    pub data: Vec<u8>,
-}
-#[derive(Debug, AsCborValue)]
-pub struct FrpDeleteDataRequest {
-    pub key: String,
-}
-#[derive(Debug, AsCborValue)]
-pub struct FrpDeleteDataResponse {}
-#[derive(Debug, AsCborValue)]
-pub struct FrpDeleteAllDataRequest {}
-#[derive(Debug, AsCborValue)]
-pub struct FrpDeleteAllDataResponse {}
-
-// `ITimeStamper` methods.
-#[derive(Debug, AsCborValue)]
-pub struct TimeStampGenerateRequest {
-    pub encoded_req: Vec<u8>,
-}
-
-#[derive(Debug, AsCborValue)]
-pub struct TimeStampGenerateResponse {
-    pub timestamp_token: Vec<u8>,
-}
-
 // The following messages have no equivalent on a HAL interface, but are used internally
 // between components.
 
@@ -729,16 +661,6 @@ declare_req_rsp_enums! { KeyMintOperation  =>    (PerformOpReq, PerformOpRsp) {
     SetAttestationIds = 0x83 =>                        (SetAttestationIdsRequest, SetAttestationIdsResponse),
     SetHalVersion = 0x84 =>                            (SetHalVersionRequest, SetHalVersionResponse),
     SetAdditionalAttestationInfo = 0x91 =>             (SetAdditionalAttestationInfoRequest, SetAdditionalAttestationInfoResponse),
-    FrpIsActive = 0xA1 =>                              (FrpIsActiveRequest, FrpIsActiveResponse),
-    FrpActivate = 0xA2 =>                              (FrpActivateRequest, FrpActivateResponse),
-    FrpDeactivate = 0xA3 =>                            (FrpDeactivateRequest, FrpDeactivateResponse),
-    FrpSetSecret = 0xA4 =>                             (FrpSetSecretRequest, FrpSetSecretResponse),
-    FrpGetSecret = 0xA5 =>                             (FrpGetSecretRequest, FrpGetSecretResponse),
-    FrpStoreData = 0xA6 =>                             (FrpStoreDataRequest, FrpStoreDataResponse),
-    FrpRetrieveData = 0xA7 =>                          (FrpRetrieveDataRequest, FrpRetrieveDataResponse),
-    FrpDeleteData = 0xA8 =>                            (FrpDeleteDataRequest, FrpDeleteDataResponse),
-    FrpDeleteAllData = 0xA9 =>                         (FrpDeleteAllDataRequest, FrpDeleteAllDataResponse),
-    TimeStampGenerate = 0xB1 =>                        (TimeStampGenerateRequest, TimeStampGenerateResponse),
 } }
 
 /// Indicate whether an operation is part of the `IRemotelyProvisionedComponent` HAL.
@@ -749,21 +671,5 @@ pub fn is_rpc_operation(code: KeyMintOperation) -> bool {
             | KeyMintOperation::RpcGenerateEcdsaP256KeyPair
             | KeyMintOperation::RpcGenerateCertificateRequest
             | KeyMintOperation::RpcGenerateCertificateV2Request
-    )
-}
-
-// Indicate whether an operation is part of the `IFactoryResetProtection` HAL.
-pub fn is_frp_operation(code: KeyMintOperation) -> bool {
-    matches!(
-        code,
-        KeyMintOperation::FrpIsActive
-            | KeyMintOperation::FrpActivate
-            | KeyMintOperation::FrpDeactivate
-            | KeyMintOperation::FrpSetSecret
-            | KeyMintOperation::FrpGetSecret
-            | KeyMintOperation::FrpStoreData
-            | KeyMintOperation::FrpRetrieveData
-            | KeyMintOperation::FrpDeleteData
-            | KeyMintOperation::FrpDeleteAllData
     )
 }
