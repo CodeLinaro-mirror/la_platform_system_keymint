@@ -239,7 +239,7 @@ impl crate::KeyMintTa {
         let mut ret_params = Vec::new();
         let op = match key_material {
             KeyMaterial::Aes(key) => {
-                let caller_nonce = get_opt_tag_value!(&params, Nonce)?;
+                let caller_nonce = get_opt_tag_value!(&params, Nonce)?.map(Vec::as_ref);
                 let mode = aes::Mode::new(&params, caller_nonce, &mut *self.imp.rng)?;
                 let dir = match purpose {
                     KeyPurpose::Encrypt => crypto::SymmetricOperation::Encrypt,
@@ -296,7 +296,7 @@ impl crate::KeyMintTa {
                 }
             }
             KeyMaterial::TripleDes(key) => {
-                let caller_nonce = get_opt_tag_value!(&params, Nonce)?;
+                let caller_nonce = get_opt_tag_value!(&params, Nonce)?.map(Vec::as_ref);
                 let mode = crypto::des::Mode::new(&params, caller_nonce, &mut *self.imp.rng)?;
                 let dir = match purpose {
                     KeyPurpose::Encrypt => crypto::SymmetricOperation::Encrypt,

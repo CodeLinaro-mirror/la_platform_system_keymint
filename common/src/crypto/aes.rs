@@ -136,7 +136,7 @@ impl Mode {
     /// otherwise generate a new nonce using the provided [`Rng`] instance.
     pub fn new(
         params: &[KeyParam],
-        caller_nonce: Option<&Vec<u8>>,
+        caller_nonce: Option<&[u8]>,
         rng: &mut dyn Rng,
     ) -> Result<Self, Error> {
         let mode = tag::get_block_mode(params)?;
@@ -156,10 +156,7 @@ impl Mode {
                 }
             }
             BlockMode::Cbc => {
-                let nonce: [u8; BLOCK_SIZE] =
-                    nonce(BLOCK_SIZE, caller_nonce, rng)?.try_into().map_err(|_e| {
-                        km_err!(InvalidNonce, "want {} byte nonce for AES-CBC", BLOCK_SIZE)
-                    })?;
+                let nonce = nonce::<BLOCK_SIZE>(caller_nonce, rng)?;
                 match padding {
                     PaddingMode::None => Ok(Mode::Cipher(CipherMode::CbcNoPadding { nonce })),
                     PaddingMode::Pkcs7 => Ok(Mode::Cipher(CipherMode::CbcPkcs7Padding { nonce })),
@@ -176,10 +173,7 @@ impl Mode {
                         "expected NONE padding for AES-CTR"
                     ));
                 }
-                let nonce: [u8; BLOCK_SIZE] =
-                    nonce(BLOCK_SIZE, caller_nonce, rng)?.try_into().map_err(|_e| {
-                        km_err!(InvalidNonce, "want {} byte nonce for AES-CTR", BLOCK_SIZE)
-                    })?;
+                let nonce = nonce::<BLOCK_SIZE>(caller_nonce, rng)?;
                 Ok(Mode::Cipher(CipherMode::Ctr { nonce }))
             }
             BlockMode::Gcm => {
@@ -189,9 +183,7 @@ impl Mode {
                         "expected NONE padding for AES-GCM"
                     ));
                 }
-                let nonce: [u8; GCM_NONCE_SIZE] = nonce(GCM_NONCE_SIZE, caller_nonce, rng)?
-                    .try_into()
-                    .map_err(|_e| km_err!(InvalidNonce, "want 12 byte nonce for AES-GCM"))?;
+                let nonce = nonce::<GCM_NONCE_SIZE>(caller_nonce, rng)?;
                 let tag_len = get_tag_value!(params, MacLength, ErrorCode::InvalidMacLength)?;
                 if tag_len % 8 != 0 {
                     return Err(km_err!(
