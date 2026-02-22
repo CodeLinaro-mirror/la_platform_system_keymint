@@ -255,10 +255,10 @@ impl From<alloc::collections::TryReserveError> for Error {
 }
 
 impl From<TryFromIntError> for Error {
-    fn from(e: TryFromIntError) -> Self {
+    fn from(_e: TryFromIntError) -> Self {
         ErrorKind::Hal(
             kmr_wire::keymint::ErrorCode::InvalidArgument,
-            alloc::format!("failed to convert integer: {e}").into(),
+            "failed to convert integer".into(),
         )
         .into()
     }
