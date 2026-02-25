@@ -891,13 +891,10 @@ impl KeyMintTa {
             PerformOpReq::DeviceDestroyAttestationIds(_req) => {
                 let aidl_version = self.aidl_version as i32;
                 if aidl_version >= 500 {
-                    let error: Error = ErrorKind::Hal(
-                        ErrorCode::Unimplemented,
-                        format!(
-                            "AIDL version ({aidl_version:?}) >= 500 doesn't support destroying attestation IDs",
-                        ),
-                    )
-                    .into();
+                    let error: Error = km_err!(
+                        Unimplemented,
+                        "AIDL version ({aidl_version:?}) >= 500 doesn't support destroying attestation IDs",
+                    );
                     return op_error_rsp(DestroyAttestationIdsRequest::CODE, error);
                 }
                 match self.destroy_attestation_ids() {
