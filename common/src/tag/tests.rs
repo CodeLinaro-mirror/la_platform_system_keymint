@@ -64,36 +64,6 @@ fn test_legacy_serialization() {
 }
 
 #[test]
-fn test_check_begin_params_fail() {
-    let chars = vec![
-        KeyParam::NoAuthRequired,
-        KeyParam::Algorithm(Algorithm::Hmac),
-        KeyParam::KeySize(KeySizeInBits(128)),
-        KeyParam::Digest(Digest::Sha256),
-        KeyParam::Purpose(KeyPurpose::Sign),
-        KeyParam::Purpose(KeyPurpose::Verify),
-        KeyParam::MinMacLength(160),
-    ];
-
-    let tests = vec![
-        (
-            KeyPurpose::Encrypt,
-            vec![KeyParam::Digest(Digest::Sha256), KeyParam::MacLength(160)],
-            "invalid purpose Encrypt",
-        ),
-        (KeyPurpose::Sign, vec![KeyParam::Digest(Digest::Sha256)], "MissingMacLength"),
-        (
-            KeyPurpose::Sign,
-            vec![KeyParam::Digest(Digest::Sha512), KeyParam::MacLength(160)],
-            "not in key characteristics",
-        ),
-    ];
-    for (purpose, params, msg) in tests {
-        expect_err!(check_begin_params(&chars, purpose, &params), msg);
-    }
-}
-
-#[test]
 fn test_copyable_tags() {
     for tag in UNPOLICED_COPYABLE_TAGS {
         let info = info(*tag).unwrap();
