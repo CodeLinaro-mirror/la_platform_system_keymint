@@ -18,7 +18,7 @@ use super::{AuthInfo, CryptoOperation, Operation, CONFIRMATION_DATA_PREFIX};
 use alloc::vec::Vec;
 use kmr_common::{
     contains_tag_value,
-    crypto::{aes, des, nonce, rsa, KeyMaterial, Rng, SymmetricOperation},
+    crypto::{aes, des, rsa, KeyMaterial, Rng, SymmetricOperation},
     get_bool_tag_value, get_opt_tag_value, get_tag_value, keyblob, km_err,
     tag::{
         characteristics_at, digest_len, get_algorithm, get_block_mode, get_digest, get_ec_curve,
@@ -897,6 +897,18 @@ fn check_begin_hmac_params(
     }
 
     Ok(BeginParamsToCheck { block_mode: false, padding: false, digest: true, mgf_digest: false })
+}
+
+/// Extract or generate a nonce of the given size.
+fn nonce<const N: usize>(caller_nonce: Option<&[u8]>, rng: &mut dyn Rng) -> Result<[u8; N], Error> {
+    Ok(match caller_nonce {
+        Some(n) => n.try_into().map_err(|_| km_err!(InvalidNonce, "want {N} byte nonce"))?,
+        None => {
+            let mut arr = [0u8; N];
+            rng.fill_bytes(&mut arr);
+            arr
+        }
+    })
 }
 
 #[cfg(test)]
