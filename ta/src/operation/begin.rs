@@ -173,7 +173,7 @@ impl crate::KeyMintTa {
             }
             KeyMaterial::TripleDes(key) => {
                 let caller_nonce = get_opt_tag_value!(&params, Nonce)?.map(Vec::as_ref);
-                let mode = des::Mode::new(&params, caller_nonce, &mut *self.imp.rng)?;
+                let mode = des_mode(&params, caller_nonce, &mut *self.imp.rng)?;
                 let dir = match purpose {
                     KeyPurpose::Encrypt => SymmetricOperation::Encrypt,
                     KeyPurpose::Decrypt => SymmetricOperation::Decrypt,
@@ -792,6 +792,42 @@ fn check_begin_3des_params(
         }
     }
     Ok(BeginParamsToCheck { block_mode: true, padding: true, digest: false, mgf_digest: false })
+}
+
+/// Determine the [`des::Mode`], rejecting invalid parameters. Use `caller_nonce` if provided,
+/// otherwise generate a new nonce using the provided [`Rng`] instance.
+fn des_mode(
+    params: &[KeyParam],
+    caller_nonce: Option<&[u8]>,
+    rng: &mut dyn Rng,
+) -> Result<des::Mode, Error> {
+    let mode = get_block_mode(params)?;
+    let padding = get_padding_mode(params)?;
+    match mode {
+        BlockMode::Ecb => {
+            if caller_nonce.is_some() {
+                return Err(km_err!(InvalidNonce, "nonce unexpectedly provided"));
+            }
+            match padding {
+                PaddingMode::None => Ok(des::Mode::EcbNoPadding),
+                PaddingMode::Pkcs7 => Ok(des::Mode::EcbPkcs7Padding),
+                _ => {
+                    Err(km_err!(IncompatiblePaddingMode, "expected NONE/PKCS7 padding for DES-ECB"))
+                }
+            }
+        }
+        BlockMode::Cbc => {
+            let nonce: [u8; des::BLOCK_SIZE] = nonce(caller_nonce, rng)?;
+            match padding {
+                PaddingMode::None => Ok(des::Mode::CbcNoPadding { nonce }),
+                PaddingMode::Pkcs7 => Ok(des::Mode::CbcPkcs7Padding { nonce }),
+                _ => {
+                    Err(km_err!(IncompatiblePaddingMode, "expected NONE/PKCS7 padding for DES-CBC"))
+                }
+            }
+        }
+        _ => Err(km_err!(UnsupportedBlockMode, "want ECB/CBC")),
+    }
 }
 
 /// Check that an HMAC operation with the given `purpose` and `params` can validly be started
