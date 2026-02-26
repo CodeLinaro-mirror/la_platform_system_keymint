@@ -254,11 +254,11 @@ impl crate::KeyMintTa {
                 auth_info: op_auth_info,
                 crypto_op: match purpose {
                     KeyPurpose::Decrypt => {
-                        let mode = rsa::DecryptionMode::new(&params)?;
+                        let mode = rsa_decryption_mode(&params)?;
                         CryptoOperation::RsaDecrypt(self.imp.rsa.begin_decrypt(key, mode)?)
                     }
                     KeyPurpose::Sign => {
-                        let mode = rsa::SignMode::new(&params)?;
+                        let mode = rsa_sign_mode(&params)?;
                         CryptoOperation::RsaSign(self.imp.rsa.begin_sign(key, mode)?)
                     }
                     _ => {
@@ -582,6 +582,46 @@ fn check_begin_rsa_params(
     }
 
     Ok(BeginParamsToCheck { block_mode: false, padding: true, digest: true, mgf_digest: true })
+}
+
+/// Determine the [`rsa::DecryptionMode`] from parameters.
+fn rsa_decryption_mode(params: &[KeyParam]) -> Result<rsa::DecryptionMode, Error> {
+    let padding = get_padding_mode(params)?;
+    match padding {
+        PaddingMode::None => Ok(rsa::DecryptionMode::NoPadding),
+        PaddingMode::RsaOaep => {
+            let msg_digest = get_digest(params)?;
+            let mgf_digest = get_mgf_digest(params)?;
+            Ok(rsa::DecryptionMode::OaepPadding { msg_digest, mgf_digest })
+        }
+        PaddingMode::RsaPkcs115Encrypt => Ok(rsa::DecryptionMode::Pkcs1_1_5Padding),
+        _ => Err(km_err!(
+            UnsupportedPaddingMode,
+            "padding mode {:?} not supported for RSA decryption",
+            padding
+        )),
+    }
+}
+
+/// Determine the [`rsa::SignMode`] from parameters.
+fn rsa_sign_mode(params: &[KeyParam]) -> Result<rsa::SignMode, Error> {
+    let padding = get_padding_mode(params)?;
+    match padding {
+        PaddingMode::None => Ok(rsa::SignMode::NoPadding),
+        PaddingMode::RsaPss => {
+            let digest = get_digest(params)?;
+            Ok(rsa::SignMode::PssPadding(digest))
+        }
+        PaddingMode::RsaPkcs115Sign => {
+            let digest = get_digest(params)?;
+            Ok(rsa::SignMode::Pkcs1_1_5Padding(digest))
+        }
+        _ => Err(km_err!(
+            UnsupportedPaddingMode,
+            "padding mode {:?} not supported for RSA signing",
+            padding
+        )),
+    }
 }
 
 /// Check that an EC operation with the given `purpose` and `params` can validly be started
