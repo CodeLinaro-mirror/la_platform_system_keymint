@@ -18,7 +18,7 @@ use super::{AuthInfo, CryptoOperation, Operation, CONFIRMATION_DATA_PREFIX};
 use alloc::vec::Vec;
 use kmr_common::{
     contains_tag_value,
-    crypto::{aes, des, rsa, KeyMaterial, SymmetricOperation},
+    crypto::{aes, des, nonce, rsa, KeyMaterial, Rng, SymmetricOperation},
     get_bool_tag_value, get_opt_tag_value, get_tag_value, keyblob, km_err,
     tag::{
         characteristics_at, digest_len, get_algorithm, get_block_mode, get_digest, get_ec_curve,
@@ -116,7 +116,7 @@ impl crate::KeyMintTa {
         let op = match key_material {
             KeyMaterial::Aes(key) => {
                 let caller_nonce = get_opt_tag_value!(&params, Nonce)?.map(Vec::as_ref);
-                let mode = aes::Mode::new(&params, caller_nonce, &mut *self.imp.rng)?;
+                let mode = aes_mode(&params, caller_nonce, &mut *self.imp.rng)?;
                 let dir = match purpose {
                     KeyPurpose::Encrypt => SymmetricOperation::Encrypt,
                     KeyPurpose::Decrypt => SymmetricOperation::Decrypt,
@@ -688,6 +688,76 @@ fn check_begin_aes_params(
         }
     }
     Ok(BeginParamsToCheck { block_mode: true, padding: true, digest: false, mgf_digest: false })
+}
+
+/// Determine the [`aes::Mode`], rejecting invalid parameters. Use `caller_nonce` if provided,
+/// otherwise generate a new nonce using the provided [`Rng`] instance.
+fn aes_mode(
+    params: &[KeyParam],
+    caller_nonce: Option<&[u8]>,
+    rng: &mut dyn Rng,
+) -> Result<aes::Mode, Error> {
+    let mode = get_block_mode(params)?;
+    let padding = get_padding_mode(params)?;
+    match mode {
+        BlockMode::Ecb => {
+            if caller_nonce.is_some() {
+                return Err(km_err!(InvalidNonce, "nonce unexpectedly provided for AES-ECB"));
+            }
+            match padding {
+                PaddingMode::None => Ok(aes::Mode::Cipher(aes::CipherMode::EcbNoPadding)),
+                PaddingMode::Pkcs7 => Ok(aes::Mode::Cipher(aes::CipherMode::EcbPkcs7Padding)),
+                _ => {
+                    Err(km_err!(IncompatiblePaddingMode, "expected NONE/PKCS7 padding for AES-ECB"))
+                }
+            }
+        }
+        BlockMode::Cbc => {
+            let nonce: [u8; aes::BLOCK_SIZE] = nonce(caller_nonce, rng)?;
+            match padding {
+                PaddingMode::None => Ok(aes::Mode::Cipher(aes::CipherMode::CbcNoPadding { nonce })),
+                PaddingMode::Pkcs7 => {
+                    Ok(aes::Mode::Cipher(aes::CipherMode::CbcPkcs7Padding { nonce }))
+                }
+                _ => {
+                    Err(km_err!(IncompatiblePaddingMode, "expected NONE/PKCS7 padding for AES-CBC"))
+                }
+            }
+        }
+        BlockMode::Ctr => {
+            if padding != PaddingMode::None {
+                return Err(km_err!(IncompatiblePaddingMode, "expected NONE padding for AES-CTR"));
+            }
+            let nonce: [u8; aes::BLOCK_SIZE] = nonce(caller_nonce, rng)?;
+            Ok(aes::Mode::Cipher(aes::CipherMode::Ctr { nonce }))
+        }
+        BlockMode::Gcm => {
+            if padding != PaddingMode::None {
+                return Err(km_err!(IncompatiblePaddingMode, "expected NONE padding for AES-GCM"));
+            }
+            let nonce: [u8; aes::GCM_NONCE_SIZE] = nonce(caller_nonce, rng)?;
+            let tag_len = get_tag_value!(params, MacLength, ErrorCode::InvalidMacLength)?;
+            if tag_len % 8 != 0 {
+                return Err(km_err!(
+                    InvalidMacLength,
+                    "tag length {} not a multiple of 8",
+                    tag_len
+                ));
+            }
+            match tag_len / 8 {
+                12 => Ok(aes::Mode::Aead(aes::GcmMode::GcmTag12 { nonce })),
+                13 => Ok(aes::Mode::Aead(aes::GcmMode::GcmTag13 { nonce })),
+                14 => Ok(aes::Mode::Aead(aes::GcmMode::GcmTag14 { nonce })),
+                15 => Ok(aes::Mode::Aead(aes::GcmMode::GcmTag15 { nonce })),
+                16 => Ok(aes::Mode::Aead(aes::GcmMode::GcmTag16 { nonce })),
+                v => Err(km_err!(
+                    InvalidMacLength,
+                    "want 12-16 byte tag for AES-GCM not {} bytes",
+                    v
+                )),
+            }
+        }
+    }
 }
 
 /// Check that a 3-DES operation with the given `purpose` and `params` can validly be started
