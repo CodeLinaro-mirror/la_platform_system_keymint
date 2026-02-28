@@ -278,7 +278,8 @@ pub fn extract_key_gen_characteristics(
     params: &[KeyParam],
     sec_level: SecurityLevel,
 ) -> Result<(Vec<KeyCharacteristics>, KeyGenInfo), Error> {
-    let keygen_info = match get_algorithm(params)? {
+    let algorithm = get_algorithm(params)?;
+    let keygen_info = match algorithm {
         Algorithm::Rsa => check_rsa_gen_params(params, sec_level),
         Algorithm::Ec => check_ec_gen_params(params, sec_level),
         Algorithm::MlDsa => check_mldsa_gen_params(params, sec_level),
@@ -286,7 +287,10 @@ pub fn extract_key_gen_characteristics(
         Algorithm::TripleDes => check_3des_gen_params(params),
         Algorithm::Hmac => check_hmac_gen_params(params, sec_level),
     }?;
-    Ok((extract_key_characteristics(secure_storage, params, &[], sec_level)?, keygen_info))
+    Ok((
+        extract_key_characteristics(secure_storage, algorithm, params, &[], sec_level)?,
+        keygen_info,
+    ))
 }
 
 /// Build the set of key characteristics for a key that is about to be imported,
@@ -299,7 +303,8 @@ pub fn extract_key_import_characteristics(
     key_format: KeyFormat,
     key_data: &[u8],
 ) -> Result<(Vec<KeyCharacteristics>, KeyMaterial), Error> {
-    let (deduced_params, key_material) = match get_algorithm(params)? {
+    let algorithm = get_algorithm(params)?;
+    let (deduced_params, key_material) = match algorithm {
         Algorithm::Rsa => {
             check_rsa_import_params(&*imp.rsa, params, sec_level, key_format, key_data)
         }
@@ -316,7 +321,7 @@ pub fn extract_key_import_characteristics(
         }
     }?;
     Ok((
-        extract_key_characteristics(secure_storage, params, &deduced_params, sec_level)?,
+        extract_key_characteristics(secure_storage, algorithm, params, &deduced_params, sec_level)?,
         key_material,
     ))
 }
@@ -326,6 +331,7 @@ pub fn extract_key_import_characteristics(
 /// parameters on top of `params`, such as those deduced from imported key material.
 fn extract_key_characteristics(
     secure_storage: SecureStorage,
+    algorithm: Algorithm,
     params: &[KeyParam],
     extra_params: &[KeyParam],
     sec_level: SecurityLevel,
@@ -348,18 +354,27 @@ fn extract_key_characteristics(
             return Err(km_err!(InvalidTag, "tag {:?} not allowed in StrongBox", param.tag()));
         }
 
-        // UsageCountLimit is peculiar. If its value is > 1, it should be Keystore-enforced.
-        // If its value is = 1, then it is KeyMint-enforced if secure storage is available,
-        // and Keystore-enforced otherwise.
-        if let KeyParam::UsageCountLimit(use_limit) = param {
-            match (use_limit, secure_storage) {
+        match param {
+            // ML-DSA keys should not have key size parameter since it's not
+            // used and should not appear as a key authorization.
+            KeyParam::KeySize(_) => {
+                if algorithm == Algorithm::MlDsa {
+                    continue;
+                }
+            }
+            // UsageCountLimit is peculiar. If its value is > 1, it should be
+            // Keystore-enforced. If its value is = 1, then it is
+            // KeyMint-enforced if secure storage is available, and
+            // Keystore-enforced otherwise.
+            KeyParam::UsageCountLimit(use_limit) => match (use_limit, secure_storage) {
                 (1, SecureStorage::Available) => {
                     chars.try_push(KeyParam::UsageCountLimit(*use_limit))?
                 }
                 (1, SecureStorage::Unavailable) | (_, _) => {
                     keystore_chars.try_push(KeyParam::UsageCountLimit(*use_limit))?
                 }
-            }
+            },
+            _ => {}
         }
 
         if KEYMINT_ENFORCED_CHARACTERISTICS.contains(&tag) {
