@@ -19,7 +19,6 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
-use alloc::string::ToString;
 use core::mem::MaybeUninit;
 use kmr_common::{crypto, Error, ErrorKind};
 use kmr_wire::keymint::{Digest, ErrorCode};
@@ -120,7 +119,7 @@ macro_rules! openssl_err {
         |e| {
             kmr_common::km_err_new!(kmr_common::ErrorKind::Hal(
                 $crate::map_openssl_errstack(&e),
-                alloc::format!("{}: {:?}", format_args!($($arg)+), e),
+                alloc::format!("{}: {e:?}", format_args!($($arg)+)).into(),
             ))
         }
     };
@@ -141,7 +140,7 @@ macro_rules! openssl_err_or {
             };
             kmr_common::km_err_new!(kmr_common::ErrorKind::Hal(
                 errcode,
-                alloc::format!("{}: {:?}", format_args!($($arg)+), e)
+                alloc::format!("{}: {e:?}", format_args!($($arg)+)).into(),
             ))
         }
     };
@@ -162,7 +161,7 @@ fn openssl_last_err() -> Error {
 
 /// Translate a returned `openssl` error into [`Error`].
 fn from_openssl_err(errs: openssl::error::ErrorStack) -> Error {
-    ErrorKind::Hal(map_openssl_errstack(&errs), "OpenSSL failure".to_string()).into()
+    ErrorKind::Hal(map_openssl_errstack(&errs), "OpenSSL failure".into()).into()
 }
 
 /// Translate a [`keymint::Digest`] into an OpenSSL [`MessageDigest`].
