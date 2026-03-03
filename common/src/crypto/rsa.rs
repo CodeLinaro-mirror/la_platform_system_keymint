@@ -15,10 +15,10 @@
 //! Functionality related to RSA.
 
 use super::{KeyMaterial, KeySizeInBits, OpaqueOr, RsaExponent};
-use crate::{der_err, km_err, tag, try_to_vec, Error, FallibleAllocExt};
+use crate::{der_err, km_err, try_to_vec, Error, FallibleAllocExt};
 use alloc::vec::Vec;
 use der::{asn1::BitStringRef, Decode, Encode};
-use kmr_wire::keymint::{Digest, KeyParam, PaddingMode};
+use kmr_wire::keymint::Digest;
 use pkcs1::RsaPrivateKey;
 use spki::{AlgorithmIdentifier, SubjectPublicKeyInfo, SubjectPublicKeyInfoRef};
 use zeroize::ZeroizeOnDrop;
@@ -152,27 +152,6 @@ pub enum DecryptionMode {
     Pkcs1_1_5Padding,
 }
 
-impl DecryptionMode {
-    /// Determine the [`DecryptionMode`] from parameters.
-    pub fn new(params: &[KeyParam]) -> Result<Self, Error> {
-        let padding = tag::get_padding_mode(params)?;
-        match padding {
-            PaddingMode::None => Ok(DecryptionMode::NoPadding),
-            PaddingMode::RsaOaep => {
-                let msg_digest = tag::get_digest(params)?;
-                let mgf_digest = tag::get_mgf_digest(params)?;
-                Ok(DecryptionMode::OaepPadding { msg_digest, mgf_digest })
-            }
-            PaddingMode::RsaPkcs115Encrypt => Ok(DecryptionMode::Pkcs1_1_5Padding),
-            _ => Err(km_err!(
-                UnsupportedPaddingMode,
-                "padding mode {:?} not supported for RSA decryption",
-                padding
-            )),
-        }
-    }
-}
-
 /// RSA signature mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SignMode {
@@ -182,29 +161,6 @@ pub enum SignMode {
     PssPadding(Digest),
     /// PKCS#1 v1.5 padding using the given digest.
     Pkcs1_1_5Padding(Digest),
-}
-
-impl SignMode {
-    /// Determine the [`SignMode`] from parameters.
-    pub fn new(params: &[KeyParam]) -> Result<Self, Error> {
-        let padding = tag::get_padding_mode(params)?;
-        match padding {
-            PaddingMode::None => Ok(SignMode::NoPadding),
-            PaddingMode::RsaPss => {
-                let digest = tag::get_digest(params)?;
-                Ok(SignMode::PssPadding(digest))
-            }
-            PaddingMode::RsaPkcs115Sign => {
-                let digest = tag::get_digest(params)?;
-                Ok(SignMode::Pkcs1_1_5Padding(digest))
-            }
-            _ => Err(km_err!(
-                UnsupportedPaddingMode,
-                "padding mode {:?} not supported for RSA signing",
-                padding
-            )),
-        }
-    }
 }
 
 /// Import an RSA key in PKCS#8 format, also returning the key size in bits and public exponent.

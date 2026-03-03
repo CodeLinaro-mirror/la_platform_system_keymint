@@ -517,21 +517,6 @@ pub enum SymmetricOperation {
     Decrypt,
 }
 
-/// Extract or generate a nonce of the given size.
-pub fn nonce<const N: usize>(
-    caller_nonce: Option<&[u8]>,
-    rng: &mut dyn Rng,
-) -> Result<[u8; N], Error> {
-    Ok(match caller_nonce {
-        Some(n) => n.try_into().map_err(|_| km_err!(InvalidNonce, "want {N} byte nonce"))?,
-        None => {
-            let mut arr = [0u8; N];
-            rng.fill_bytes(&mut arr);
-            arr
-        }
-    })
-}
-
 /// Salt value used in HKDF if none provided.
 const HKDF_EMPTY_SALT: [u8; SHA256_DIGEST_LEN] = [0; SHA256_DIGEST_LEN];
 
