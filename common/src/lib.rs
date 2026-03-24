@@ -17,10 +17,7 @@
 #![no_std]
 extern crate alloc;
 
-use alloc::{
-    string::{String, ToString},
-    vec::Vec,
-};
+use alloc::{borrow::Cow, vec::Vec};
 use core::convert::From;
 use core::num::TryFromIntError;
 use der::ErrorKind as DerErrorKind;
@@ -55,10 +52,10 @@ pub enum ErrorKind {
     ///
     /// The `IKeyMintDevice`, `ISharedSecret` and `ISecureClock` HALs all share the same numbering
     /// space for error codes, encoded here as [`kmr_wire::keymint::ErrorCode`].
-    Hal(ErrorCode, String),
+    Hal(ErrorCode, Cow<'static, str>),
     /// Error as reported on the `IRemotelyProvisionedComponent` HAL, which uses its own error
     /// codes.
-    Rpc(rpc::ErrorCode, String),
+    Rpc(rpc::ErrorCode, Cow<'static, str>),
     /// Memory allocation error.
     ///
     /// This holds a string literal rather than an allocated `String` to avoid allocating in an
@@ -108,7 +105,7 @@ macro_rules! km_err {
     { $error_code:ident, $($arg:tt)+ } => {
         $crate::km_err_new!($crate::ErrorKind::Hal(
             kmr_wire::keymint::ErrorCode::$error_code,
-            alloc::format!($($arg)+),
+            $crate::format_cow(format_args!($($arg)+)),
         ))
     }
 }
@@ -118,7 +115,10 @@ macro_rules! km_err {
 #[macro_export]
 macro_rules! km_verr {
     { $error_code:expr, $($arg:tt)+ } => {
-       $crate::km_err_new!($crate::ErrorKind::Hal($error_code, alloc::format!($($arg)+)))
+       $crate::km_err_new!($crate::ErrorKind::Hal(
+            $error_code,
+            $crate::format_cow(format_args!($($arg)+)),
+        ))
     }
 }
 
@@ -150,7 +150,7 @@ macro_rules! rpc_err {
     { $error_code:ident, $($arg:tt)+ } => {
         $crate::km_err_new!($crate::ErrorKind::Rpc(
             kmr_wire::rpc::ErrorCode::$error_code,
-            alloc::format!($($arg)+),
+            $crate::format_cow(format_args!($($arg)+)),
         ))
     }
 }
@@ -187,6 +187,15 @@ macro_rules! vec_try {
     { $x1:expr $(,)? } => {
         kmr_wire::vec_try1_with_alloc_err($x1, || $crate::alloc_err!(1))
     };
+}
+
+#[doc(hidden)]
+#[inline(always)]
+pub fn format_cow(args: core::fmt::Arguments) -> Cow<'static, str> {
+    match args.as_str() {
+        Some(s) => s.into(),
+        None => alloc::format!("{}", args).into(),
+    }
 }
 
 /// Function that mimics `slice.to_vec()` but which detects allocation failures.
@@ -239,17 +248,17 @@ impl From<alloc::collections::TryReserveError> for Error {
     fn from(_e: alloc::collections::TryReserveError) -> Self {
         ErrorKind::Hal(
             kmr_wire::keymint::ErrorCode::MemoryAllocationFailed,
-            "allocation of Vec failed".to_string(),
+            "allocation of Vec failed".into(),
         )
         .into()
     }
 }
 
 impl From<TryFromIntError> for Error {
-    fn from(e: TryFromIntError) -> Self {
+    fn from(_e: TryFromIntError) -> Self {
         ErrorKind::Hal(
             kmr_wire::keymint::ErrorCode::InvalidArgument,
-            alloc::format!("failed to convert integer: {e}"),
+            "failed to convert integer".into(),
         )
         .into()
     }

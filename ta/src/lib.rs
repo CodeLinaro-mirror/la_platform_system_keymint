@@ -129,7 +129,7 @@ pub struct KeyMintTa {
     aidl_version: KeyMintHalVersion,
 
     /// Versions of the HAL that this TA can be requested to act as.
-    allowed_aidl_versions: Vec<KeyMintHalVersion>,
+    allowed_aidl_versions: Box<[KeyMintHalVersion]>,
 
     /**
      * State that is set after the TA starts, but latched thereafter.
@@ -140,7 +140,7 @@ pub struct KeyMintTa {
 
     /// Information provided by the bootloader once at start of day.
     boot_info: Option<keymint::BootInfo>,
-    rot_data: Option<Vec<u8>>,
+    rot_data: Option<Box<[u8]>>,
 
     /// Information provided by the HAL service once at start of day.
     hal_info: Option<HalInfo>,
@@ -177,7 +177,7 @@ pub struct KeyMintTa {
     rot_challenge: [u8; 16],
 
     /// The operation table.
-    operations: Vec<Option<Operation>>,
+    operations: Box<[Option<Operation>]>,
 
     /// Use counts for keys where this is tracked.
     use_count: [Option<UseCount>; MAX_USE_COUNTED_KEYS],
@@ -353,7 +353,7 @@ impl KeyMintTa {
             hw_info,
             rpc_info,
             aidl_version: KEYMINT_CURRENT_VERSION,
-            allowed_aidl_versions,
+            allowed_aidl_versions: allowed_aidl_versions.into(),
             boot_info: None,
             rot_data: None,
             hal_info: None,
@@ -620,10 +620,12 @@ impl KeyMintTa {
                 verified_boot_state: boot_info.verified_boot_state,
             };
             self.boot_info = Some(boot_info);
-            self.rot_data =
-                Some(rot_info.into_vec().map_err(|e| {
-                    km_err!(EncodingError, "failed to encode root-of-trust: {e:?}")
-                })?);
+            self.rot_data = Some(
+                rot_info
+                    .into_vec()
+                    .map_err(|e| km_err!(EncodingError, "failed to encode root-of-trust: {e:?}"))?
+                    .into(),
+            );
         }
         Ok(())
     }
@@ -891,13 +893,10 @@ impl KeyMintTa {
             PerformOpReq::DeviceDestroyAttestationIds(_req) => {
                 let aidl_version = self.aidl_version as i32;
                 if aidl_version >= 500 {
-                    let error: Error = ErrorKind::Hal(
-                        ErrorCode::Unimplemented,
-                        format!(
-                            "AIDL version ({aidl_version:?}) >= 500 doesn't support destroying attestation IDs",
-                        ),
-                    )
-                    .into();
+                    let error: Error = km_err!(
+                        Unimplemented,
+                        "AIDL version ({aidl_version:?}) >= 500 doesn't support destroying attestation IDs",
+                    );
                     return op_error_rsp(DestroyAttestationIdsRequest::CODE, error);
                 }
                 match self.destroy_attestation_ids() {
